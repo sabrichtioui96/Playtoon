@@ -163,6 +163,14 @@ class VideoStreamProcessor:
         hmax = mask.shape[0] - 1
         return [(max(0, a - pad), min(hmax, b + pad)) for a, b in bands]
 
+    def flush(self, frame: np.ndarray, frame_idx: int, t: float, origin_prefix: str = "video") -> list[Observation]:
+        """End of stream: a change that was still animating on the last frame must not be lost."""
+        if self._dirty_since is None:
+            return []
+        self.stats.frames_seen -= 1
+        self._dirty_since = t - self.max_wait_s - 1     # force: treat as waited long enough
+        return self.process_frame(frame, frame_idx, t, origin_prefix)
+
     def process_frame(self, frame: np.ndarray, frame_idx: int, t: float, origin_prefix: str = "video") -> list[Observation]:
         self.stats.frames_seen += 1
         small = _small_gray(frame)
@@ -224,8 +232,10 @@ class VideoStreamProcessor:
                 self.stats.ocr_region += 1
                 self._assign_tracks(boxes, frame_idx, region)
                 self._ocr_small[a:b + 1] = small[a:b + 1]
-                if not boxes and motion_mask is not None and motion_mask[a:b + 1].mean() >= 0.01:
-                    self._decor.append((a, b, t + 3.0))   # moving, no text: animation, not content
+                # strongly moving band with no text (e.g. a sliding graphic): ignore it briefly.
+                # Subtle background shimmer does not qualify, so text appearing there is still seen.
+                if not boxes and motion_mask is not None and motion_mask[a:b + 1].mean() >= 0.05:
+                    self._decor.append((a, b, t + 2.0))
         self._dirty_since = None
         text, conf = boxes_to_text([tr.box for tr in self._tracks])
         if text == self._last_text:

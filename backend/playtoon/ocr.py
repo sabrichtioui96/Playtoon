@@ -153,10 +153,48 @@ def boxes_to_text(boxes: list[TextBox]) -> tuple[str, float]:
                 last.append(b)
                 continue
         lines.append([b])
-    out = []
+    # Split each line where a wide horizontal gap separates boxes, then group the resulting segments
+    # into columns by horizontal overlap. Multi-column layouts (quiz beside a chat panel) are then
+    # read column by column instead of interleaving their lines.
+    med_h = float(np.median([b.h for b in boxes])) or 10.0
+    segments: list[list[TextBox]] = []
     for ln in lines:
-        rtl = sum(any("؀" <= ch <= "ۿ" for ch in b.text) for b in ln) > len(ln) / 2
-        ln.sort(key=lambda b: -b.x if rtl else b.x)
-        out.append(" ".join(b.text for b in ln))
+        ln.sort(key=lambda b: b.x)
+        cur = [ln[0]]
+        for b in ln[1:]:
+            prev = cur[-1]
+            if b.x - (prev.x + prev.w) > 2.5 * med_h:
+                segments.append(cur)
+                cur = [b]
+            else:
+                cur.append(b)
+        segments.append(cur)
+    columns: list[dict] = []
+    for seg in sorted(segments, key=lambda s: (s[0].x, s[0].y)):
+        x0, x1 = seg[0].x, max(b.x + b.w for b in seg)
+        col = next((c for c in columns if min(x1, c["x1"]) - max(x0, c["x0"]) > 0), None)
+        if col is None:
+            columns.append({"x0": x0, "x1": x1, "segs": [seg]})
+        else:
+            col["x0"], col["x1"] = min(col["x0"], x0), max(col["x1"], x1)
+            col["segs"].append(seg)
+    # merge columns that ended up overlapping after growing
+    merged: list[dict] = []
+    for c in sorted(columns, key=lambda c: c["x0"]):
+        if merged and c["x0"] < merged[-1]["x1"]:
+            merged[-1]["x1"] = max(merged[-1]["x1"], c["x1"])
+            merged[-1]["segs"] += c["segs"]
+        else:
+            merged.append(c)
+    rtl_page = sum(any("؀" <= ch <= "ۿ" for ch in b.text) for b in boxes) > len(boxes) / 2
+    if rtl_page:
+        merged.reverse()
+    out = []
+    for c in merged:
+        for seg in sorted(c["segs"], key=lambda s: min(b.y for b in s)):
+            rtl = sum(any("؀" <= ch <= "ۿ" for ch in b.text) for b in seg) > len(seg) / 2
+            seg.sort(key=lambda b: -b.x if rtl else b.x)
+            out.append(" ".join(b.text for b in seg))
+        out.append("")
     conf = float(np.average([b.conf for b in boxes], weights=[max(len(b.text), 1) for b in boxes]))
-    return "\n".join(out), conf
+    return "\n".join(out).strip(), conf

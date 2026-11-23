@@ -76,7 +76,9 @@ class ClaudeAnswerer:
                 model=self.cfg.model,
                 max_tokens=16000,
                 system=SYSTEM_PROMPT,
-                messages=[{"role": "user", "content": build_user_prompt(q)}],
+                messages=[{"role": "user", "content": build_user_prompt(q) + (
+                    f"\nTranslate the question to '{self.cfg.translate_to}' first and write the explanation in that language."
+                    if self.cfg.translate_to else "")}],
                 output_config={"effort": self.cfg.effort,
                                "format": {"type": "json_schema", "schema": ANSWER_SCHEMA}},
                 betas=["server-side-fallback-2026-07-01"],

@@ -82,11 +82,13 @@ def browser_run(server):
             page = browser.new_page(viewport={"width": 1100, "height": 700})
 
             def post(path, body):
+                if not path or body is None:
+                    return
                 posts.append((path, json.loads(body)))
                 c.post(path, content=body, headers={"Content-Type": "application/json"})
             page.expose_function("__playtoonPost", post)
             page.goto((FIX / "browser_quiz.html").as_uri())
-            page.evaluate("window.__playtoonTransport = (p, b) => window.__playtoonPost(p, JSON.stringify(b))")
+            page.evaluate("() => { window.__playtoonTransport = (p, b) => window.__playtoonPost(p, JSON.stringify(b)); }")
             page.add_script_tag(content=content_js)          # = extension popup "Read questions on this tab"
             page.evaluate("runScenario()")
             page.wait_for_function("window.scenarioDone === true", timeout=120000)
@@ -138,7 +140,7 @@ def test_04_chatbot_conversation(browser_run):
     japan = _bq(browser_run, "capital of japan")
     aus = _bq(browser_run, "what about australia")
     assert hamlet and born and japan and aus, [x["question_text"] for x in browser_run["questions"]]
-    assert all("chat" in x["channels"] for x in (hamlet, born, japan, aus))
+    assert all("chat" in x["channels"] for x in (hamlet, born, japan, aus)),         [(x["question_text"], x["channels"], x["status"]) for x in browser_run["questions"]]
     # two consecutive questions in one message -> two questions
     assert hamlet["question_id"] != born["question_id"]
     # inline multiple-choice options parsed from the chat message
@@ -210,26 +212,26 @@ def _audio_case(client, events, lang, variant):
     return q, sim, tr
 
 
-@pytest.mark.parametrize("variant", ["", "_noisy"])
+@pytest.mark.parametrize("variant", ["", "_noisy"], ids=["clean", "noisy"])
 def test_05_spoken_english(client, events, variant):
     q, sim, tr = _audio_case(client, events, "en", variant)
     assert sim >= 90, q["question_text"]
-    record(f"test_05_spoken_english[{variant or 'clean'}]", question=summary(q), similarity=sim, transcripts=tr)
+    record(f"test_05_spoken_english[{'noisy' if variant else 'clean'}]", question=summary(q), similarity=sim, transcripts=tr)
 
 
-@pytest.mark.parametrize("variant", ["", "_noisy"])
+@pytest.mark.parametrize("variant", ["", "_noisy"], ids=["clean", "noisy"])
 def test_06_spoken_french(client, events, variant):
     q, sim, tr = _audio_case(client, events, "fr", variant)
     assert sim >= 90, q["question_text"]
     assert not any("geographie" in normalize_for_match(q["question_text"]) for _ in [0]), "intro phrase not dropped"
-    record(f"test_06_spoken_french[{variant or 'clean'}]", question=summary(q), similarity=sim, transcripts=tr)
+    record(f"test_06_spoken_french[{'noisy' if variant else 'clean'}]", question=summary(q), similarity=sim, transcripts=tr)
 
 
-@pytest.mark.parametrize("variant", ["", "_noisy"])
+@pytest.mark.parametrize("variant", ["", "_noisy"], ids=["clean", "noisy"])
 def test_07_spoken_arabic(client, events, variant):
     q, sim, tr = _audio_case(client, events, "ar", variant)
     assert sim >= 85, q["question_text"]
-    record(f"test_07_spoken_arabic[{variant or 'clean'}]", question=summary(q), similarity=sim, transcripts=tr)
+    record(f"test_07_spoken_arabic[{'noisy' if variant else 'clean'}]", question=summary(q), similarity=sim, transcripts=tr)
 
 
 def test_05b_speech_completeness(client, events):

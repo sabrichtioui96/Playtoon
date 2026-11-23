@@ -200,6 +200,18 @@ def parse_options(lines: list[str]) -> tuple[list[str], list[int]]:
     return opts, used
 
 
+def _starts_new_question(block: str, nxt: str, lang: str) -> bool:
+    """Is `nxt` a new question rather than the wrapped continuation of `block`?
+    "Space Trivia - Round 2" / "Which planet ..." -> new.  "... which country" / "was he born?" -> wrapped."""
+    if not nxt or not starts_like_question(nxt, lang):
+        return False
+    last = re.findall(r"[\w'’-]+", block.lower())
+    if last and last[-1] in TRAILING_INCOMPLETE.get(lang, set()) | TRAILING_INCOMPLETE["en"]:
+        return False
+    first = nxt.lstrip("«\"'“(¿")[:1]
+    return not first.islower()          # Arabic has no case: isLower() is False -> treated as new
+
+
 def split_sentences(text: str) -> list[str]:
     parts = re.split(r"(?<=[?؟？.!])\s+", text.strip())
     return [p.strip() for p in parts if p.strip()]
@@ -212,16 +224,23 @@ def extract_questions(raw_text: str, lang_hint: str | None = None) -> list[Parse
     Several consecutive questions in one block yield several ParsedQuestions.
     """
     text = raw_text.translate(str.maketrans({"‏": "", "‎": ""}))
-    lines = [_clean_line(l) for l in text.splitlines() if _clean_line(l)]
-    if not lines:
+    raw_lines = [_clean_line(l) for l in text.splitlines() if _clean_line(l)]
+    if not raw_lines:
         return []
     lang = lang_hint or detect_language(text)
+    # Re-join wrapped inline options: "... C) Tokyo D)" + "Nagoya"
+    lines: list[str] = []
+    for l in raw_lines:
+        if lines and re.search(r"(^|\s)\(?[A-Ha-h][\).]$", lines[-1]):
+            lines[-1] += " " + l
+        else:
+            lines.append(l)
 
     # Expand inline options "A) x B) y C) z" on a single line
     expanded: list[str] = []
     for line in lines:
         inline = INLINE_OPTIONS_RE.findall(line)
-        if len(inline) >= 2 and not OPTION_LINE_RE.match(line):
+        if len(inline) >= 2:
             head = INLINE_OPTIONS_RE.split(line)[0].strip()
             first = re.search(r"(?:^|\s)\(?[A-Ha-h][\).:]\s+", line)
             if first:
@@ -244,7 +263,8 @@ def extract_questions(raw_text: str, lang_hint: str | None = None) -> list[Parse
         # Join wrapped lines that belong to one sentence (OCR / layout wraps)
         block = line
         j = i + 1
-        while j < len(lines) and not OPTION_LINE_RE.match(lines[j]) and not re.search(r"[?؟？.!:]$", block)                 and not starts_like_question(lines[j], lang) and not is_question_sentence(lines[j], lang):
+        while j < len(lines) and not OPTION_LINE_RE.match(lines[j]) and not re.search(r"[?؟？.!:]$", block) \
+                and not _starts_new_question(block, lines[j], lang):
             block += " " + lines[j]
             j += 1
         sentences = split_sentences(block)

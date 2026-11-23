@@ -95,7 +95,7 @@ class AudioSession:
             await self._handle(ev)
         if self._tasks:
             await asyncio.gather(*self._tasks, return_exceptions=True)
-        held = self.assembler.expire(time.monotonic() + 3600)   # stream ended: release held questions
+        held = self.assembler.release_all()                      # stream ended: release held questions
         for o in held:
             o.origin = f"audio:{self.label}"
         await self.engine.ingest(held)
@@ -198,8 +198,22 @@ class Engine:
 
     async def _frame_worker(self) -> None:
         idx: dict[str, int] = {}
+        last: dict[str, object] = {}
         while True:
-            await self._frame_event.wait()
+            try:
+                await asyncio.wait_for(self._frame_event.wait(), 1.0)
+            except asyncio.TimeoutError:
+                # Clients only send frames that changed, so the settled end state of an animation may
+                # be the last frame we get: flush streams that went quiet while still "in motion".
+                for sid, frame in list(last.items()):
+                    proc = self.video_streams.get(sid)
+                    if proc is not None:
+                        try:
+                            await self.ingest(await self.run_cpu(proc.flush, frame, idx[sid], time.monotonic(), "screen"))
+                        except Exception:
+                            log.exception("frame flush failed")
+                    last.pop(sid, None)
+                continue
             self._frame_event.clear()
             for sid in list(self._latest_frame):
                 data, t = self._latest_frame.pop(sid)
@@ -207,6 +221,7 @@ class Engine:
                 idx[sid] = idx.get(sid, 0) + 1
                 try:
                     frame = decode_image(data)
+                    last[sid] = frame
                     obs = await self.run_cpu(proc.process_frame, frame, idx[sid], t, "screen")
                     await self.ingest(obs)
                 except Exception:
@@ -217,9 +232,11 @@ class Engine:
         self.jobs[job_id] = {"status": "running", "stats": proc.stats.to_dict()}
         start = time.monotonic()
         try:
-            def frames():
-                return list(iter_video(path, sample_fps))
-            for fidx, t, frame in await self.run_cpu(frames):
+            gen = iter_video(path, sample_fps)          # decoded lazily, one sampled frame at a time
+            last = None
+            while (item := await self.run_cpu(next, gen, None)) is not None:
+                fidx, t, frame = item
+                last = item
                 if realtime:
                     delay = start + t - time.monotonic()
                     if delay > 0:
@@ -228,6 +245,8 @@ class Engine:
                 for o in obs:
                     o.observed_at = time.monotonic()
                 await self.ingest(obs)
+            if last is not None:
+                await self.ingest(await self.run_cpu(proc.flush, last[2], last[0], last[1] + 0.01, "video"))
             self.jobs[job_id] = {"status": "done", "stats": proc.stats.to_dict()}
         except Exception as e:
             log.exception("video job failed")

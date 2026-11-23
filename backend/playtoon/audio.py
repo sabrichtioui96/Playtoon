@@ -139,13 +139,24 @@ class Transcriber:
     """faster-whisper wrapper. Language is detected on the segment and restricted to the
     supported set; task is always 'transcribe' (original language preserved, no translation)."""
 
-    def __init__(self, model_size: str = "small", device: str = "cpu", compute_type: str = "int8"):
-        from faster_whisper import WhisperModel
+    def __init__(self, model_size: str = "small", device: str = "cpu", compute_type: str = "int8",
+                 per_language: dict[str, str] | None = None):
+        """`per_language` optionally maps a language to a larger model (e.g. {"ar": "large-v3-turbo"}):
+        the primary model detects the language, the mapped model transcribes it."""
         self.model_size = model_size
-        import os
-        self.model = WhisperModel(model_size, device=device, compute_type=compute_type,
-                                  cpu_threads=max(4, (os.cpu_count() or 8) // 2))
+        self.device, self.compute_type = device, compute_type
+        self.per_language = per_language or {}
+        self._models: dict[str, object] = {}
+        self.model = self._load(model_size)
         self._lock = threading.Lock()
+
+    def _load(self, size: str):
+        if size not in self._models:
+            import os
+            from faster_whisper import WhisperModel
+            self._models[size] = WhisperModel(size, device=self.device, compute_type=self.compute_type,
+                                              cpu_threads=max(4, (os.cpu_count() or 8) // 2))
+        return self._models[size]
 
     def detect_language(self, audio: np.ndarray, allowed=SUPPORTED_LANGS) -> tuple[str, float]:
         _, _, all_probs = self.model.detect_language(audio)
@@ -170,7 +181,8 @@ class Transcriber:
                       "ar": "سؤال مسابقة. هل هو ١٩٩٠ أم ٢٥٠٠ كم؟"}[lang]
             if hint_text:
                 prompt = hint_text[-200:] + " " + prompt
-            segments, info = self.model.transcribe(
+            model = self._load(self.per_language[lang]) if lang in self.per_language else self.model
+            segments, info = model.transcribe(
                 audio, language=lang, task="transcribe", beam_size=5, vad_filter=False,
                 condition_on_previous_text=False, initial_prompt=prompt, word_timestamps=False)
             segs = list(segments)
@@ -190,10 +202,16 @@ _tlock = threading.Lock()
 
 
 def get_transcriber(model_size: str = "small") -> Transcriber:
+    """Per-language overrides come from env, e.g. PLAYTOON_ASR_MODEL_AR=large-v3-turbo."""
     global _transcriber
+    import os
     with _tlock:
         if _transcriber is None or _transcriber.model_size != model_size:
-            _transcriber = Transcriber(model_size)
+            per = {l: os.environ[f"PLAYTOON_ASR_MODEL_{l.upper()}"] for l in SUPPORTED_LANGS
+                   if os.environ.get(f"PLAYTOON_ASR_MODEL_{l.upper()}")}
+            _transcriber = Transcriber(model_size, per_language=per)
+            for size in set(per.values()):
+                _transcriber._load(size)            # load at warm-up, not on the first Arabic question
         return _transcriber
 
 
@@ -314,6 +332,14 @@ class UtteranceAssembler:
             for o in out:
                 o.observed_at = now
         return out + self._expire_pending(now)
+
+    def release_all(self, now: float | None = None) -> list[Observation]:
+        """Stream ended: release held complete questions immediately (with the real timestamp)."""
+        now = time.monotonic() if now is None else now
+        out, self.held = self.held, []
+        for o in out:
+            o.observed_at = now
+        return out
 
     def _expire_pending(self, now: float) -> list[Observation]:
         if self.pending_text and now - self.pending_t > self.hold_timeout_s:
