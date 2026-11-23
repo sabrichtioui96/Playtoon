@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Playtoon browser test page</title>
+<style>
+  body { font: 18px system-ui, sans-serif; margin: 30px; display: flex; gap: 40px; }
+  #quiz { width: 520px; } .opt { padding: 6px 10px; margin: 6px 0; background: #eef; border-radius: 6px; list-style: none; }
+  #chat { width: 420px; border: 1px solid #ccc; border-radius: 10px; padding: 10px; height: 520px; overflow: auto; }
+  .message { padding: 8px 12px; margin: 8px 0; border-radius: 12px; max-width: 85%; }
+  .message.bot { background: #f1f3f5; } .message.user { background: #d0ebff; margin-left: auto; }
+  input.secret { display: block; }
+</style>
+</head>
+<body>
+<section id="quiz">
+  <h2>Weekly quiz</h2>
+  <p>Welcome back! Read carefully.</p>
+  <p id="q"></p>
+  <ul id="opts"></ul>
+  <input class="secret" type="text" value="What is my password? (must never be read)">
+</section>
+<section id="chat" role="log" aria-live="polite"></section>
+<script>
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+async function typeInto(el, text, cps = 25) { for (const ch of text) { el.textContent += ch; await sleep(1000 / cps); } }
+async function addMsg(role, text, streaming = false) {
+  const d = document.createElement("div");
+  d.className = "message " + role; d.setAttribute("data-role", role === "bot" ? "assistant" : "user");
+  document.getElementById("chat").appendChild(d);
+  if (streaming) { for (const w of text.split(" ")) { d.textContent += (d.textContent ? " " : "") + w; await sleep(120); } }
+  else d.textContent = text;
+}
+window.runScenario = async function () {
+  // A. progressively appearing multiple-choice question
+  await typeInto(document.getElementById("q"), "Which planet has the largest number of moons?");
+  for (const o of ["Jupiter", "Saturn", "Uranus", "Neptune"]) {
+    await sleep(300);
+    const li = document.createElement("li"); li.className = "opt"; li.textContent = String.fromCharCode(65 + document.querySelectorAll(".opt").length) + ") " + o;
+    document.getElementById("opts").appendChild(li);
+  }
+  // C. chatbot conversation with streaming, a non-question, two consecutive questions, and a follow-up
+  await addMsg("bot", "Hi! I am QuizBot. Let us warm up.", true);
+  await sleep(1800);
+  await addMsg("bot", "Who wrote Hamlet? And in which country was he born?", true);
+  await sleep(1800);
+  await addMsg("user", "Shakespeare, England.");
+  await sleep(400);
+  await addMsg("bot", "Correct! Next: what is the capital of Japan? A) Kyoto B) Osaka C) Tokyo D) Nagoya", true);
+  await sleep(1800);
+  await addMsg("user", "Tokyo");
+  await sleep(400);
+  await addMsg("bot", "And what about Australia?", true);
+  await sleep(2500);
+  window.scenarioDone = true;
+};
+</script>
+</body>
+</html>

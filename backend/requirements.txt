@@ -1,0 +1,19 @@
+fastapi
+uvicorn[standard]
+websockets
+python-multipart
+numpy
+opencv-python-headless
+pillow
+rapidocr-onnxruntime
+faster-whisper
+av<16
+webrtcvad-wheels
+rapidfuzz
+anthropic
+httpx
+# tests / fixture generation
+pytest
+pytest-asyncio
+playwright
+edge-tts

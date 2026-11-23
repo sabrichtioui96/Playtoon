@@ -1,0 +1,14 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+backend/tests/server.log
+backend/tests/browser_screenshot.png
+# Android build output (app not yet added)
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+.idea/
+*.iml
+.env
