@@ -23,7 +23,9 @@ log = logging.getLogger(__name__)
 
 @dataclass
 class FusionConfig:
-    settle_s: float = 1.2            # wait for other modality / options after a question completes
+    settle_s: float = 1.0            # progressive sources (video/screen frames): wait for late options
+    browser_settle_s: float = 0.6    # DOM text: the extension debounces, so changes arrive quickly
+    final_settle_s: float = 0.05     # final content (still image, finished chat message, utterance)
     multimodal_settle_s: float = 0.3  # already seen by both families: submit almost immediately
     cross_modal_window_s: float = 25.0
     same_stream_window_s: float = 600.0
@@ -188,8 +190,8 @@ class QuestionManager:
             self._schedule(q, now)
             events.append(("question.updated", q))
         elif q.status == Status.SETTLING:
-            if len(fams) > 1:
-                self._schedule(q, now)           # shorten settle: both families present
+            if len(fams) > 1 or o.metadata.get("final"):
+                self._schedule(q, now)           # shorten settle: both families present / content is final
             elif q.options != old_options or q.question_text != old_text:
                 self._schedule(q, now)           # content still changing: restart settle timer
             events.append(("question.updated", q))
@@ -234,7 +236,25 @@ class QuestionManager:
     def _schedule(self, q: DetectedQuestion, now: float) -> None:
         fams = {m.family for m in q.modalities}
         q.status = Status.SETTLING
-        self._deadline[q.question_id] = now + (self.cfg.multimodal_settle_s if len(fams) > 1 else self.cfg.settle_s)
+        last = q.observations[-1]
+        if last.metadata.get("final"):
+            wait = self.cfg.final_settle_s
+        elif last.modality == Modality.BROWSER:
+            wait = self.cfg.browser_settle_s
+        else:
+            wait = self.cfg.settle_s
+        if len(fams) > 1:
+            wait = min(wait, self.cfg.multimodal_settle_s)
+        self._deadline[q.question_id] = now + wait
+
+    @staticmethod
+    def fingerprint(q: DetectedQuestion) -> tuple:
+        """Content identity used to reuse a speculative answer: same text, options and discrepancies."""
+        return (normalize_for_match(q.question_text), tuple(normalize_for_match(o) for o in q.options),
+                len(q.discrepancies), tuple(q.context[-3:]))
+
+    def is_final(self, q: DetectedQuestion) -> bool:
+        return bool(q.observations) and bool(q.observations[-1].metadata.get("final"))
 
     # ------------------------------------------------------------------ scheduling
     def due(self, now: float | None = None, hold=None) -> list[DetectedQuestion]:

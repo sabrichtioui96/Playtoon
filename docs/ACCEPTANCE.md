@@ -1,6 +1,6 @@
 # Playtoon acceptance tests
 
-Run finished 2026-11-23T22:05:46 (Python 3.12.10). Generated from `docs/acceptance_results.json` by `backend/tools/acceptance_report.py`.
+Run finished 2026-11-24T01:50:09 (Python 3.12.10). Generated from `docs/acceptance_results.json` by `backend/tools/acceptance_report.py`.
 
 Run: `cd backend && ../.venv/Scripts/python -m pytest tests/test_acceptance.py tests/test_android.py -v`
 
@@ -22,18 +22,19 @@ Run: `cd backend && ../.venv/Scripts/python -m pytest tests/test_acceptance.py t
 
 - **Arabic transcription is not word-perfect.** On the clean Arabic clip, Whisper `large-v3-turbo` hears "اليادان" instead of "اليابان" (Japan); one letter is wrong. Test 7 passes because it accepts ≥ 85 % similarity to the reference and checks the language, completeness and the answer path. The noisy clip transcribes exactly. `small` (used for English/French) also got "عاصمة" wrong, which is why Arabic is routed to turbo (`PLAYTOON_ASR_MODEL_AR`).
 - **Test speech is synthetic.** English/French clips are Windows SAPI voices, Arabic is an edge-tts neural voice; noisy variants add synthetic babble + 50 Hz hum at ~10 dB SNR. Real microphones, accents and rooms were not tested.
-- **Answers in these runs come from the offline answerer** (arithmetic + a small demo fact table), because no Anthropic credentials were configured. The Claude path (`reasoning.py`) is implemented but was not exercised by this run.
-- **CPU latency.** On this machine (CPU only), Whisper takes ~3–6 s per spoken segment (`small`) and ~10–15 s (`large-v3-turbo`); OCR ~1–2 s per image. A GPU is recommended for real-time use.
+- **Answers in these runs come from the offline answerer** (arithmetic + a small demo fact table), because no Anthropic credentials were configured. The Claude path (`reasoning.py`) is implemented but was not exercised by this run. For the harder set this means only *detection* was scored, not answer correctness.
+- **CPU latency.** On this machine (CPU only), Whisper `small` takes ~1.8 s per spoken segment once the language is known (~3.4 s when it must be detected), `large-v3-turbo` ~10–15 s; OCR ~0.8 s per image. Claude's own response time comes on top of the pipeline numbers in the latency table.
+- **One harder case needs the host vocabulary:** on default settings Whisper hears Python's `len` as "LUN" in the clean clip; entering the topic vocabulary (Settings) fixes it (`test_hard_audio_with_host_vocabulary`).
 - **Test 10 uses an emulator** (Android 16 / API 36, x86_64) and an image upload as input; the in-app microphone and MediaProjection screen-capture flows were built but need a manual check on a device (they require interactive OS consent dialogs).
 
 ## 1. Question displayed as ordinary browser text
 
-Outcome: **passed** in 0.0 s
+Outcome: **passed** in 0.01 s
 
 ```json
 {
  "question": {
-  "question_id": "q_660436bda9f7",
+  "question_id": "q_e6c727a539de",
   "question_text": "Which planet has the largest number of moons?",
   "source": [
    "visual"
@@ -53,7 +54,7 @@ Outcome: **passed** in 0.0 s
   "status": "answered",
   "revision": 0,
   "discrepancies": [],
-  "processing_ms": 1280,
+  "processing_ms": 625,
   "answer": "Saturn",
   "option_index": 1,
   "answer_provider": "offline"
@@ -65,13 +66,13 @@ Outcome: **passed** in 0.0 s
 
 ## 2. Question embedded in an image
 
-Outcome: **passed** in 6.33 s
+Outcome: **passed** in 2.73 s
 
 ```json
 {
  "ocr_text": "Space Trivia - Round 2\nWhich planet has the largest number of moons?\nA) Jupiter\nB)Saturn\nC) Uranus\nD) Neptune",
  "question": {
-  "question_id": "q_f14e2fc7cabb",
+  "question_id": "q_08ae4dadc97a",
   "question_text": "Which planet has the largest number of moons?",
   "source": [
    "visual"
@@ -90,14 +91,14 @@ Outcome: **passed** in 6.33 s
   "status": "answered",
   "revision": 0,
   "discrepancies": [],
-  "processing_ms": 1265,
+  "processing_ms": 78,
   "answer": "Saturn",
   "option_index": 1,
   "answer_provider": "offline"
  },
  "math_ocr": "Math check:\nWhat is 12 x 7 + 5 = ?",
  "math": {
-  "question_id": "q_ab30cf2fe122",
+  "question_id": "q_e2704d75eb26",
   "question_text": "What is 12 x 7 + 5 = ?",
   "source": [
    "visual"
@@ -111,7 +112,7 @@ Outcome: **passed** in 6.33 s
   "status": "answered",
   "revision": 0,
   "discrepancies": [],
-  "processing_ms": 1266,
+  "processing_ms": 79,
   "answer": "89",
   "option_index": null,
   "answer_provider": "offline"
@@ -121,7 +122,7 @@ Outcome: **passed** in 6.33 s
 
 ## 3. Question displayed in a video frame
 
-Outcome: **passed** in 14.63 s
+Outcome: **passed** in 6.33 s
 
 ```json
 {
@@ -138,7 +139,7 @@ Outcome: **passed** in 14.63 s
  "video_frames_total": 325,
  "questions": [
   {
-   "question_id": "q_64099460c8a5",
+   "question_id": "q_d7ef4fcd6a3e",
    "question_text": "Which planet has the largest number of moons?",
    "source": [
     "visual"
@@ -157,13 +158,13 @@ Outcome: **passed** in 14.63 s
    "status": "answered",
    "revision": 0,
    "discrepancies": [],
-   "processing_ms": 6797,
+   "processing_ms": 2827,
    "answer": "Saturn",
    "option_index": 1,
    "answer_provider": "offline"
   },
   {
-   "question_id": "q_5cde85be5ed0",
+   "question_id": "q_1ff5f642df66",
    "question_text": "What is the capital of Australia?",
    "source": [
     "visual"
@@ -182,7 +183,7 @@ Outcome: **passed** in 14.63 s
    "status": "answered",
    "revision": 0,
    "discrepancies": [],
-   "processing_ms": 4406,
+   "processing_ms": 2217,
    "answer": "Canberra",
    "option_index": 2,
    "answer_provider": "offline"
@@ -200,7 +201,7 @@ Outcome: **passed** in 0.0 s
 {
  "questions": [
   {
-   "question_id": "q_9d82aa9f0b23",
+   "question_id": "q_5b975fec0ca6",
    "question_text": "Who wrote Hamlet?",
    "source": [
     "visual"
@@ -215,13 +216,13 @@ Outcome: **passed** in 0.0 s
    "status": "answered",
    "revision": 0,
    "discrepancies": [],
-   "processing_ms": 1233,
+   "processing_ms": 1031,
    "answer": "William Shakespeare",
    "option_index": null,
    "answer_provider": "offline"
   },
   {
-   "question_id": "q_e6418cfddd85",
+   "question_id": "q_2008fbba8518",
    "question_text": "And in which country was he born?",
    "source": [
     "visual"
@@ -236,14 +237,14 @@ Outcome: **passed** in 0.0 s
    "status": "answered",
    "revision": 0,
    "discrepancies": [],
-   "processing_ms": 1233,
+   "processing_ms": 1031,
    "answer": null,
    "option_index": null,
    "answer_provider": "offline"
   },
   {
-   "question_id": "q_ae7d0ab855f1",
-   "question_text": "Next: what is the capital of Japan?",
+   "question_id": "q_29468d8f239a",
+   "question_text": "what is the capital of Japan?",
    "source": [
     "visual"
    ],
@@ -262,14 +263,14 @@ Outcome: **passed** in 0.0 s
    "status": "answered",
    "revision": 0,
    "discrepancies": [],
-   "processing_ms": 1281,
+   "processing_ms": 1015,
    "answer": "Tokyo",
    "option_index": 2,
    "answer_provider": "offline"
   },
   {
-   "question_id": "q_72a1db37adc1",
-   "question_text": "Tokyo And what about Australia?",
+   "question_id": "q_64460723a31f",
+   "question_text": "And what about Australia?",
    "source": [
     "visual"
    ],
@@ -283,7 +284,7 @@ Outcome: **passed** in 0.0 s
    "status": "answered",
    "revision": 0,
    "discrepancies": [],
-   "processing_ms": 1281,
+   "processing_ms": 1046,
    "answer": "Canberra",
    "option_index": null,
    "answer_provider": "offline"
@@ -295,12 +296,12 @@ Outcome: **passed** in 0.0 s
 
 ## 5. Spoken English question — `clean`
 
-Outcome: **passed** in 10.55 s
+Outcome: **passed** in 13.77 s
 
 ```json
 {
  "question": {
-  "question_id": "q_bae403f0e570",
+  "question_id": "q_d9c59d5914cc",
   "question_text": "Which planet has the largest number of moons?",
   "source": [
    "audio"
@@ -310,11 +311,11 @@ Outcome: **passed** in 10.55 s
   ],
   "language": "en",
   "options": [],
-  "confidence": 0.727,
+  "confidence": 0.734,
   "status": "answered",
   "revision": 0,
   "discrepancies": [],
-  "processing_ms": 1266,
+  "processing_ms": 63,
   "answer": "Saturn",
   "option_index": null,
   "answer_provider": "offline"
@@ -326,9 +327,9 @@ Outcome: **passed** in 10.55 s
    "text": "Here is a space question.",
    "language": "en",
    "language_prob": 1.0,
-   "confidence": 0.727,
+   "confidence": 0.722,
    "duration_s": 1.77,
-   "asr_ms": 3845,
+   "asr_ms": 7958,
    "source": "mic:test"
   },
   {
@@ -336,9 +337,9 @@ Outcome: **passed** in 10.55 s
    "text": "Which planet has the largest number of moons?",
    "language": "en",
    "language_prob": 1.0,
-   "confidence": 0.727,
+   "confidence": 0.734,
    "duration_s": 2.76,
-   "asr_ms": 4005,
+   "asr_ms": 4199,
    "source": "mic:test"
   }
  ]
@@ -347,12 +348,12 @@ Outcome: **passed** in 10.55 s
 
 ## 5. Spoken English question — `noisy`
 
-Outcome: **passed** in 8.31 s
+Outcome: **passed** in 10.6 s
 
 ```json
 {
  "question": {
-  "question_id": "q_671e9fb0dd33",
+  "question_id": "q_0495f651f20f",
   "question_text": "Which planet has the largest number of moons?",
   "source": [
    "audio"
@@ -362,11 +363,11 @@ Outcome: **passed** in 8.31 s
   ],
   "language": "en",
   "options": [],
-  "confidence": 0.798,
+  "confidence": 0.794,
   "status": "answered",
   "revision": 0,
   "discrepancies": [],
-  "processing_ms": 1204,
+  "processing_ms": 93,
   "answer": "Saturn",
   "option_index": null,
   "answer_provider": "offline"
@@ -378,9 +379,9 @@ Outcome: **passed** in 8.31 s
    "text": "Here is a space question. Which planet has the largest number of moons?",
    "language": "en",
    "language_prob": 1.0,
-   "confidence": 0.799,
+   "confidence": 0.794,
    "duration_s": 6.24,
-   "asr_ms": 3940,
+   "asr_ms": 7288,
    "source": "mic:test"
   }
  ]
@@ -389,12 +390,12 @@ Outcome: **passed** in 8.31 s
 
 ## 6. Spoken French question — `clean`
 
-Outcome: **passed** in 11.13 s
+Outcome: **passed** in 13.74 s
 
 ```json
 {
  "question": {
-  "question_id": "q_133c333873e8",
+  "question_id": "q_839dfc84bf36",
   "question_text": "Quelle est la capitale de l'Australie ?",
   "source": [
    "audio"
@@ -408,7 +409,7 @@ Outcome: **passed** in 11.13 s
   "status": "answered",
   "revision": 0,
   "discrepancies": [],
-  "processing_ms": 1250,
+  "processing_ms": 78,
   "answer": "Canberra",
   "option_index": null,
   "answer_provider": "offline"
@@ -420,19 +421,19 @@ Outcome: **passed** in 11.13 s
    "text": "Question de géographie.",
    "language": "fr",
    "language_prob": 0.998,
-   "confidence": 0.766,
+   "confidence": 0.772,
    "duration_s": 1.89,
-   "asr_ms": 4031,
+   "asr_ms": 7519,
    "source": "mic:test"
   },
   {
    "session": "audio3",
    "text": "Quelle est la capitale de l'Australie ?",
    "language": "fr",
-   "language_prob": 0.993,
-   "confidence": 0.846,
+   "language_prob": 0.998,
+   "confidence": 0.845,
    "duration_s": 2.16,
-   "asr_ms": 4337,
+   "asr_ms": 4497,
    "source": "mic:test"
   }
  ]
@@ -441,12 +442,12 @@ Outcome: **passed** in 11.13 s
 
 ## 6. Spoken French question — `noisy`
 
-Outcome: **passed** in 8.19 s
+Outcome: **passed** in 10.11 s
 
 ```json
 {
  "question": {
-  "question_id": "q_78d0803be74b",
+  "question_id": "q_4ff8a9519d47",
   "question_text": "Quelle est la capitale de l'Australie ?",
   "source": [
    "audio"
@@ -460,7 +461,7 @@ Outcome: **passed** in 8.19 s
   "status": "answered",
   "revision": 0,
   "discrepancies": [],
-  "processing_ms": 1218,
+  "processing_ms": 93,
   "answer": "Canberra",
   "option_index": null,
   "answer_provider": "offline"
@@ -471,10 +472,10 @@ Outcome: **passed** in 8.19 s
    "session": "audio4",
    "text": "Question de géographie. Quelle est la capitale de l'Australie ?",
    "language": "fr",
-   "language_prob": 0.994,
+   "language_prob": 0.993,
    "confidence": 0.844,
    "duration_s": 5.37,
-   "asr_ms": 4175,
+   "asr_ms": 7220,
    "source": "mic:test"
   }
  ]
@@ -483,12 +484,12 @@ Outcome: **passed** in 8.19 s
 
 ## 7. Spoken Arabic question — `clean`
 
-Outcome: **passed** in 23.55 s
+Outcome: **passed** in 37.91 s
 
 ```json
 {
  "question": {
-  "question_id": "q_3f1207db570d",
+  "question_id": "q_54d6d5ecd64b",
   "question_text": "ما هي عاصمة اليادان؟",
   "source": [
    "audio"
@@ -498,11 +499,11 @@ Outcome: **passed** in 23.55 s
   ],
   "language": "ar",
   "options": [],
-  "confidence": 0.796,
+  "confidence": 0.791,
   "status": "answered",
   "revision": 0,
   "discrepancies": [],
-  "processing_ms": 1202,
+  "processing_ms": 93,
   "answer": null,
   "option_index": null,
   "answer_provider": "offline"
@@ -514,19 +515,19 @@ Outcome: **passed** in 23.55 s
    "text": "سؤال في الجغرافيا",
    "language": "ar",
    "language_prob": 1.0,
-   "confidence": 0.83,
+   "confidence": 0.828,
    "duration_s": 1.86,
-   "asr_ms": 10313,
+   "asr_ms": 20031,
    "source": "mic:test"
   },
   {
    "session": "audio5",
    "text": "ما هي عاصمة اليادان؟",
    "language": "ar",
-   "language_prob": 0.998,
-   "confidence": 0.797,
+   "language_prob": 1.0,
+   "confidence": 0.791,
    "duration_s": 2.19,
-   "asr_ms": 10502,
+   "asr_ms": 16190,
    "source": "mic:test"
   }
  ]
@@ -535,12 +536,12 @@ Outcome: **passed** in 23.55 s
 
 ## 7. Spoken Arabic question — `noisy`
 
-Outcome: **passed** in 23.64 s
+Outcome: **passed** in 33.08 s
 
 ```json
 {
  "question": {
-  "question_id": "q_61daadfb0176",
+  "question_id": "q_74e18b00b258",
   "question_text": "ما هي عاصمة اليابان؟",
   "source": [
    "audio"
@@ -550,11 +551,11 @@ Outcome: **passed** in 23.64 s
   ],
   "language": "ar",
   "options": [],
-  "confidence": 0.84,
+  "confidence": 0.838,
   "status": "answered",
   "revision": 0,
   "discrepancies": [],
-  "processing_ms": 1264,
+  "processing_ms": 63,
   "answer": "طوكيو",
   "option_index": null,
   "answer_provider": "offline"
@@ -565,20 +566,20 @@ Outcome: **passed** in 23.64 s
    "session": "audio6",
    "text": "سؤال في الجغرافية",
    "language": "ar",
-   "language_prob": 0.986,
-   "confidence": 0.872,
+   "language_prob": 0.989,
+   "confidence": 0.873,
    "duration_s": 2.61,
-   "asr_ms": 9981,
+   "asr_ms": 17684,
    "source": "mic:test"
   },
   {
    "session": "audio6",
    "text": "ما هي عاصمة اليابان؟",
    "language": "ar",
-   "language_prob": 0.99,
-   "confidence": 0.844,
+   "language_prob": 0.989,
+   "confidence": 0.841,
    "duration_s": 1.86,
-   "asr_ms": 10725,
+   "asr_ms": 13744,
    "source": "mic:test"
   }
  ]
@@ -587,12 +588,12 @@ Outcome: **passed** in 23.64 s
 
 ## 8. Audio and text presented simultaneously
 
-Outcome: **passed** in 11.79 s
+Outcome: **passed** in 15.93 s
 
 ```json
 {
  "question": {
-  "question_id": "q_cf91c81e3068",
+  "question_id": "q_8c99cbf877ee",
   "question_text": "Which planet has the largest number of moons?",
   "source": [
    "visual",
@@ -613,7 +614,7 @@ Outcome: **passed** in 11.79 s
   "status": "answered",
   "revision": 0,
   "discrepancies": [],
-  "processing_ms": 5015,
+  "processing_ms": 62,
   "answer": "Saturn",
   "option_index": 1,
   "answer_provider": "offline"
@@ -628,7 +629,7 @@ Outcome: **passed** in 11.79 s
 
 ## 9. Same question not submitted twice
 
-Outcome: **passed** in 9.92 s
+Outcome: **passed** in 6.12 s
 
 ```json
 {
@@ -646,7 +647,7 @@ Outcome: **passed** in 9.92 s
 
 ## 10. Result displayed in the Android app
 
-Outcome: **passed** in 15.87 s
+Outcome: **passed** in 36.67 s
 
 ```json
 {
@@ -661,12 +662,12 @@ Outcome: **passed** in 15.87 s
 
 ## Supporting: paused / multi-sentence / non-question speech
 
-Outcome: **passed** in 32.29 s
+Outcome: **passed** in 33.45 s
 
 ```json
 {
  "paused": {
-  "question_id": "q_155fc30a13a9",
+  "question_id": "q_91b3fb7d77f1",
   "question_text": "Which river is the longest in Africa?",
   "source": [
    "audio"
@@ -676,17 +677,17 @@ Outcome: **passed** in 32.29 s
   ],
   "language": "en",
   "options": [],
-  "confidence": 0.74,
+  "confidence": 0.743,
   "status": "answered",
   "revision": 0,
   "discrepancies": [],
-  "processing_ms": 1202,
+  "processing_ms": 77,
   "answer": null,
   "option_index": null,
   "answer_provider": "offline"
  },
  "multi_sentence": {
-  "question_id": "q_237b66cf89c5",
+  "question_id": "q_1340d22d39bc",
   "question_text": "A train leaves Paris at 3 p.m. travelling at 120 km per hour. How far has it traveled by 5pm?",
   "source": [
    "audio"
@@ -696,11 +697,11 @@ Outcome: **passed** in 32.29 s
   ],
   "language": "en",
   "options": [],
-  "confidence": 0.672,
+  "confidence": 0.679,
   "status": "answered",
   "revision": 0,
   "discrepancies": [],
-  "processing_ms": 1296,
+  "processing_ms": 108,
   "answer": null,
   "option_index": null,
   "answer_provider": "offline"
@@ -708,3 +709,80 @@ Outcome: **passed** in 32.29 s
  "audio_questions": 2
 }
 ```
+
+
+# Harder question set (English + French)
+
+**34/35 passed.** Cases are defined in `backend/tests/hard_cases.py`; detection is scored on every run, answer correctness only when Claude is the answerer (`answer_correct` is `null` with the offline answerer).
+
+| Case | Result | Detected question | Options |
+|---|---|---|---|
+| `image[img_fx]` | passed | If f(x) = 3x² - 2x + 1, what is f(4)? | 41, 43, 45, 49 |
+| `image[img_word_problem]` | passed | A shop sells pens at $1.20 each. Mia buys 15 pens and pays with a $20 bill. How much change does she receive? | $0.00, $2.00, $2.50, $3.00 |
+| `image[img_lookalike]` | passed | Which fraction is equal to 0.375? | 3/8, 3/5, 5/8, 8/3 |
+| `image[img_numbered]` | passed | Which Chinese dynasty built most of the wall that stands today? | Han, Ming, Qin, Tang |
+| `image[img_true_false]` | passed | True or False: Light travels faster than sound in air. | True, False |
+| `image[img_fill_blank]` | passed | The chemical symbol for gold is ____. | - |
+| `image[img_dark_small]` | passed | In which year did the Berlin Wall fall? | 1987, 1989, 1991, 1993 |
+| `image[img_percent]` | passed | A jacket costs $80. It is discounted by 25%, then the sale price is increased by 1o%. What is the final price? | $60, $66, $68, $72 |
+| `image[img_fr_history]` | passed | En quelle annee la Revolution francaise a-t-elle commence ? | 1776, 1789, 1799, 1815 |
+| `image[img_fr_math]` | passed | Combien font 7 x 8 - 6 ? | - |
+| `image[img_fr_word]` | passed | Un train part a 14 h 30 et roule pendant 2 h 45. A quelle heure arrive-t-il ? | 16 h 45, 17 h 05, 17 h 15, 17 h 45 |
+| `image[img_fr_accents]` | passed | Quel élement chimique a pour symbole 《 Fe 》 ? | Le fluor, Le fer, Le francium, Le fermium |
+| `chat[chat_followup_chain]` | passed | Which country has the largest population in Africa?; And what is its capital city?; How many states does it have? | - |
+| `chat[chat_split_message]` | passed | What is the boiling point of water at sea level in degrees Fahrenheit? | - |
+| `chat[chat_numbered_options]` | passed | Which of these is a prime number? | - |
+| `chat[chat_fr_followup]` | passed | Quel est le plus long fleuve de France ?; Et le deuxième ? | - |
+| `chat[chat_fr_options_inline]` | passed | quelle planète est surnommée la planète rouge ? | - |
+| `chat[chat_not_questions]` | passed | - | - |
+| `audio[aud_en_date-clean]` | passed | In 1969, Apollo 11 landed on the moon. Which astronaut was the second person to walk on its surface? | - |
+| `audio[aud_en_date-noisy]` | passed | In 1969, Apollo 11 landed on the moon. Which astronaut was the second person to walk on its surface? | - |
+| `audio[aud_en_percent-clean]` | passed | What is 15% of 240? | - |
+| `audio[aud_en_percent-noisy]` | passed | What is 15% of 240? | - |
+| `audio[aud_en_spoken_options-clean]` | passed | Which gas do plants absorb from the air? | Oxygen, Nitrogen, Carbon dioxide, Helium |
+| `audio[aud_en_spoken_options-noisy]` | passed | Which gas-due plants absorb from the air? | Oxygen, Nitrogen, Carbon dioxide, Helium |
+| `audio[aud_en_technical-clean]` | failed | In Python, what does the LUN function return when called on the string hello world? | - |
+| `audio[aud_en_technical-noisy]` | passed | In Python, what does the LEN function return when called on the string hello world? | - |
+| `audio[aud_fr_time-clean]` | passed | Un train part à 14h30 et roule pendant 2h45. À quelle heure arrive-t-il ? | - |
+| `audio[aud_fr_time-noisy]` | passed | Un train part à 14h30 et roule pendant 2h41. À quelle heure arrive Théïne ? | - |
+| `audio[aud_fr_hexagon-clean]` | passed | Combien de côtés possède un hexagone ? | - |
+| `audio[aud_fr_hexagon-noisy]` | passed | Combien de côtés possède un hexagone ? | - |
+| `audio[aud_fr_spoken_options-clean]` | passed | Quel est le plus grand océan du monde ? | L'Atlantique, L'Indien, Le Pacifique |
+| `audio[aud_fr_spoken_options-noisy]` | passed | Quel est le plus grand océan du monde ? | L'Atlantique, L'Indien, Le Pacifique |
+| `audio[aud_fr_names-clean]` | passed | Qui a écrit le roman Les Misérables, publié en 1862 ? | - |
+| `audio[aud_fr_names-noisy]` | passed | Qui a écrit le roman Les Misérables, publié en 1862. | - |
+| `audio_with_host_vocabulary` | passed | In Python, what does the len function return when called on the string hello world? | - |
+
+### test_hard_audio[aud_en_technical-clean] (failed)
+```
+f variant == "noisy" else "")
+        stream_wav(HARD / f"{name}.wav", speed=3.0)
+        q = wait_for(lambda: next((x for x in qs(client) if "audio" in x["source"] and x["status"] == "answered"), None), 90)
+        tr = [e["data"]["text"] for e in events.of("transcript.final")]
+        assert q, f"no question; transcripts={tr}"
+        nq = N(q["question_text"])
+        missing = [k for k in case["keywords"] if N(k) not in nq and not (extract_numbers(k) and set(extract_numbers(k)) <= set(extract_numbers(q["question_text"])))]
+        sim = fuzz.token_set_ratio(N(case["question"]), nq)
+        ok_ans = answer_ok(q, case["answer"])
+        record(f"test_hard_audio[{case['id']}-{variant}]", transcripts=tr, detected=q["question_text"], similarity=sim,
+               options=q["options"], language=q["language"], answer=(q["answer"] or {}).get("suggested_answer"),
+               answer_correct=ok_ans)
+        assert q["language"] == case["lang"]
+>       assert not missing, (missing, q["question_text"])
+E       AssertionError: (['len'], 'In Python, what does the LUN function return when called on the string hello world?')
+E       assert not ['len']
+
+tests\test_hard.py:112: AssertionError
+```
+
+# Latency (question shown / speech ended -> answer delivered)
+
+Pipeline latency measured by `backend/tools/latency_bench.py` with the offline answerer (model time excluded; add Claude's response time on top). Median of 3 runs, seconds.
+
+| Input | baseline | speedup1 | final |
+|---|---|---|---|
+| browser_text | 1.262 | 0.642 | 0.633 |
+| chat_message | 1.237 | 0.114 | 0.088 |
+| image_upload | 2.7 | 1.664 | 0.976 |
+| speech_en | 6.46 | 2.524 | 2.901 |
+| speech_fr | 7.173 | 3.218 | 6.35 |

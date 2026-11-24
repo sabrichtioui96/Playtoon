@@ -25,6 +25,11 @@ RESULTS: dict[str, dict] = {}
 
 @pytest.fixture(scope="session")
 def server():
+    yield from run_server()
+
+
+def run_server():
+    """Start the real server as a subprocess; yields its base URL, terminates it afterwards."""
     env = {**os.environ, "PLAYTOON_PORT": str(PORT), "PLAYTOON_HOST": "127.0.0.1",
            "PLAYTOON_AI_PROVIDER": os.environ.get("PLAYTOON_AI_PROVIDER", "offline"),
            "PLAYTOON_ASR_MODEL_AR": os.environ.get("PLAYTOON_ASR_MODEL_AR", "large-v3-turbo"),

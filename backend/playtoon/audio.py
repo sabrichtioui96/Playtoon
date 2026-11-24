@@ -14,7 +14,8 @@ import numpy as np
 import webrtcvad
 
 from .models import Modality, Observation
-from .text_utils import detect_language, extract_questions, looks_incomplete, starts_like_question
+from .text_utils import (detect_language, extract_questions, looks_incomplete, parse_option_list, split_spoken_options,
+                         starts_like_question)
 
 log = logging.getLogger(__name__)
 
@@ -39,7 +40,7 @@ class AudioSegmenter:
     energy is clearly above an adaptive noise floor, which suppresses steady background noise
     (fans, crowd murmur) that VAD alone tends to accept."""
 
-    def __init__(self, aggressiveness: int = 2, silence_ms: int = 700, pre_roll_ms: int = 300,
+    def __init__(self, aggressiveness: int = 2, silence_ms: int = 550, pre_roll_ms: int = 300,
                  max_segment_s: float = 30.0, min_speech_ms: int = 300, noise_margin_db: float = 6.0):
         self.vad = webrtcvad.Vad(aggressiveness)
         self.silence_frames = silence_ms // FRAME_MS
@@ -259,14 +260,25 @@ class UtteranceAssembler:
         first = words[0].lower().strip(",.")
         return first in CONTINUATION_WORDS or text[0].islower()
 
-    def add(self, tr: Transcript, now: float | None = None, more_coming: bool = False) -> list[Observation]:
-        """Complete questions are held for `grace_s` (and while more speech is queued) so that a
-        fragment spoken after a pause can still be attached to them."""
+    def add(self, tr: Transcript, now: float | None = None, more_coming: bool = False,
+            segment_end: float | None = None) -> list[Observation]:
+        """Complete questions are held for `grace_s` after the speech ended (and while more speech is
+        queued) so that a fragment spoken after a pause can still be attached to them. The grace is
+        measured from the end of the speech segment, not from when transcription finished, so with
+        a slow transcriber the hold is usually already over and the question is released at once."""
         now = time.monotonic() if now is None else now
+        seg_end = segment_end if segment_end is not None else now
         text = tr.text.strip()
         if not text or text.lower() in WHISPER_HALLUCINATIONS or tr.confidence < 0.15:
             return self.expire(now, more_coming)
         lang = tr.language or detect_language(text)
+        opts = parse_option_list(text, lang) if self.held else []
+        if opts and not self.held[-1].options:
+            # choices spoken after a pause: "Which gas…?" … "Is it oxygen, nitrogen or helium?"
+            self.held[-1].options = opts
+            self.held[-1].metadata["options_spoken_separately"] = True
+            self.held_t = seg_end
+            return self.expire(now, more_coming)
         if self.held and self.is_continuation(text, lang):
             last = self.held[-1]
             core = last.metadata["core_question"]
@@ -277,13 +289,13 @@ class UtteranceAssembler:
             last.text = last.text[: len(last.text) - len(core)] + new_core
             last.metadata["core_question"] = new_core
             last.metadata["joined_after_pause"] = True
-            self.held_t = now
+            self.held_t = seg_end
             return self.expire(now, more_coming)
         released = self.held
         self.held = []
         new = self._process(text, tr, lang, now)
         if new:
-            self.held, self.held_t = new, now
+            self.held, self.held_t = new, seg_end
         return released + self.expire(now, more_coming)
 
     def _process(self, text: str, tr: Transcript, lang: str, now: float) -> list[Observation]:
@@ -293,9 +305,12 @@ class UtteranceAssembler:
         else:
             confs = [tr.confidence]
         self.pending_text = ""
-        parsed = extract_questions(text, lang)
+        q_text, spoken_opts = split_spoken_options(text, lang)
+        parsed = extract_questions(q_text, lang)
         out: list[Observation] = []
         complete = [q for q in parsed if q.complete]
+        if complete and spoken_opts and not complete[-1].options:
+            complete[-1].options = spoken_opts
         if complete:
             # context statements from earlier segments + preamble in this one
             stmts = [s for (t, s) in self.statements if now - t <= self.context_window_s]
@@ -308,7 +323,7 @@ class UtteranceAssembler:
                     language=lang, options=q.options, complete=True, origin="audio",
                     stream_key="audio", observed_at=now,
                     metadata={"core_question": q.text, "language_prob": round(tr.language_prob, 3),
-                              "asr_ms": tr.elapsed_ms, "spoken_s": round(tr.duration_s, 2)}))
+                              "asr_ms": tr.elapsed_ms, "spoken_s": round(tr.duration_s, 2), "final": True}))
             self.statements.clear()
             trailing = [q for q in parsed if not q.complete and parsed.index(q) > parsed.index(complete[-1])]
             if trailing:

@@ -55,7 +55,7 @@ def observations_from_text(text: str, conf: float, origin: str, stream_key: str 
                            meta: dict | None = None) -> list[Observation]:
     now = time.monotonic()
     obs = []
-    for q in extract_questions(text, lang_hint):
+    for q in extract_questions(text, lang_hint, final=bool((meta or {}).get("final"))):
         obs.append(Observation(text=q.text, modality=modality, confidence=conf, language=q.language,
                                options=q.options, complete=q.complete, origin=origin,
                                stream_key=stream_key, metadata={**(meta or {}), "preamble": q.preamble},
@@ -66,7 +66,8 @@ def observations_from_text(text: str, conf: float, origin: str, stream_key: str 
 def process_image(img: np.ndarray, origin: str = "image", lang_hint: str | None = None) -> tuple[str, list[Observation]]:
     boxes = get_engine().recognize(img)
     text, conf = boxes_to_text(boxes)
-    return text, observations_from_text(text, conf, origin, stream_key=None, lang_hint=lang_hint)
+    # a single still image is final content: nothing more will render into it
+    return text, observations_from_text(text, conf, origin, stream_key=None, lang_hint=lang_hint, meta={"final": True})
 
 
 def decode_image(data: bytes) -> np.ndarray:

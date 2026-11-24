@@ -13,7 +13,7 @@ class Settings(ctx: Context) {
         get() = p.getString("ai_provider", "auto")!!
         set(v) = p.edit().putString("ai_provider", v).apply()
     var aiModel: String
-        get() = p.getString("ai_model", "claude-opus-5-5")!!
+        get() = p.getString("ai_model", "")!!
         set(v) = p.edit().putString("ai_model", v).apply()
     var aiEffort: String
         get() = p.getString("ai_effort", "low")!!
@@ -22,6 +22,10 @@ class Settings(ctx: Context) {
     var language: String
         get() = p.getString("language", "auto")!!
         set(v) = p.edit().putString("language", v).apply()
+    /** Topic terms that help speech recognition spell names and jargon (e.g. "Python, len(), Abuja"). */
+    var asrVocabulary: String
+        get() = p.getString("asr_vocabulary", "")!!
+        set(v) = p.edit().putString("asr_vocabulary", v).apply()
     /** Empty = keep the original language (spec default: no automatic translation). */
     var translateTo: String
         get() = p.getString("translate_to", "")!!

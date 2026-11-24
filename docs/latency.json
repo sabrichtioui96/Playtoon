@@ -1,0 +1,143 @@
+{
+ "baseline": {
+  "browser_text": {
+   "median_s": 1.262,
+   "max_s": 1.302,
+   "runs": [
+    1.262,
+    1.225,
+    1.302
+   ]
+  },
+  "chat_message": {
+   "median_s": 1.237,
+   "max_s": 1.24,
+   "runs": [
+    1.231,
+    1.237,
+    1.24
+   ]
+  },
+  "image_upload": {
+   "median_s": 2.7,
+   "max_s": 3.877,
+   "runs": [
+    3.877,
+    2.7,
+    2.677
+   ]
+  },
+  "speech_en": {
+   "median_s": 6.46,
+   "max_s": 6.583,
+   "runs": [
+    6.46,
+    6.343,
+    6.583
+   ]
+  },
+  "speech_fr": {
+   "median_s": 7.173,
+   "max_s": 7.367,
+   "runs": [
+    7.059,
+    7.173,
+    7.367
+   ]
+  }
+ },
+ "speedup1": {
+  "browser_text": {
+   "median_s": 0.642,
+   "max_s": 0.648,
+   "runs": [
+    0.648,
+    0.642,
+    0.623
+   ]
+  },
+  "chat_message": {
+   "median_s": 0.114,
+   "max_s": 0.116,
+   "runs": [
+    0.097,
+    0.114,
+    0.116
+   ]
+  },
+  "image_upload": {
+   "median_s": 1.664,
+   "max_s": 2.767,
+   "runs": [
+    2.767,
+    1.551,
+    1.664
+   ]
+  },
+  "speech_en": {
+   "median_s": 2.524,
+   "max_s": 2.569,
+   "runs": [
+    2.524,
+    2.569,
+    2.466
+   ]
+  },
+  "speech_fr": {
+   "median_s": 3.218,
+   "max_s": 3.628,
+   "runs": [
+    3.218,
+    3.198,
+    3.628
+   ]
+  }
+ },
+ "final": {
+  "browser_text": {
+   "median_s": 0.633,
+   "max_s": 0.66,
+   "runs": [
+    0.633,
+    0.66,
+    0.616
+   ]
+  },
+  "chat_message": {
+   "median_s": 0.088,
+   "max_s": 0.118,
+   "runs": [
+    0.118,
+    0.088,
+    0.085
+   ]
+  },
+  "image_upload": {
+   "median_s": 0.976,
+   "max_s": 1.737,
+   "runs": [
+    1.737,
+    0.826,
+    0.976
+   ]
+  },
+  "speech_en": {
+   "median_s": 2.901,
+   "max_s": 3.018,
+   "runs": [
+    3.018,
+    2.901,
+    2.618
+   ]
+  },
+  "speech_fr": {
+   "median_s": 6.35,
+   "max_s": 8.511,
+   "runs": [
+    4.862,
+    6.35,
+    8.511
+   ]
+  }
+ }
+}

@@ -68,7 +68,7 @@ class RapidOcrEngine(OcrEngine):
     def __init__(self) -> None:
         from rapidocr_onnxruntime import RapidOCR
         # 'max' limit: long thin bands (region OCR) are not blown up to 736px on their short side
-        self._ocr = RapidOCR(det_limit_type="max", det_limit_side_len=960)
+        self._ocr = RapidOCR(det_limit_type="max", det_limit_side_len=960, intra_op_num_threads=4)  # all-cores default oversubscribes (2.5x slower)
         self._lock = threading.Lock()   # ORT session is not re-entrant across threads here
 
     def recognize(self, img: np.ndarray) -> list[TextBox]:

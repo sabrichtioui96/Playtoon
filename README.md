@@ -16,7 +16,7 @@ modalities, and sends each question once to an AI model for a suggested answer.
 | `backend/playtoon/audio.py` | Noise gate + WebRTC VAD endpointing, Whisper transcription (original language, no translation), multi-sentence / paused-question assembly |
 | `backend/playtoon/chat.py` | Chatbot message tracking with short context for follow-up questions |
 | `backend/playtoon/fusion.py` | Central question manager: merge, discrepancy recording, settle window, one AI request per question |
-| `backend/playtoon/reasoning.py` | Claude answerer (structured JSON output) with an offline fallback |
+| `backend/playtoon/reasoning.py` | Answerers: Groq / xAI (OpenAI-compatible), Claude, offline fallback |
 | `backend/playtoon/engine.py`, `server.py` | Async pipeline, FastAPI REST ingest + WebSocket event stream (`/ws/client`) and mic audio (`/ws/audio`) |
 | `browser-extension/` | MV3 extension: reads visible text and chatbot messages on tabs the user explicitly enables |
 | `backend/tests/` | Unit tests, acceptance tests (incl. Android via adb), fixtures (`tools/make_fixtures.py` regenerates them) |
@@ -29,9 +29,10 @@ python -m venv ../.venv && ../.venv/Scripts/python -m pip install -r requirement
 ../.venv/Scripts/python -m playtoon.server        # http://0.0.0.0:8765
 ```
 
-AI answers use Claude when `ANTHROPIC_API_KEY` (or an `ant auth login` profile) is available;
-otherwise an offline answerer handles arithmetic and a few demo facts. Env vars:
-`PLAYTOON_AI_PROVIDER` (auto|anthropic|offline), `PLAYTOON_AI_MODEL`, `PLAYTOON_AI_EFFORT`,
+AI answers come from the provider named by `PLAYTOON_AI_PROVIDER`:
+`groq` (`GROQ_API_KEY`, free tier with rate limits), `xai` / Grok (`XAI_API_KEY`), `anthropic`
+(`ANTHROPIC_API_KEY`), `offline` (arithmetic + a few demo facts), or `auto` (first key found:
+Anthropic, Groq, xAI, else offline). Env vars: `PLAYTOON_AI_PROVIDER`, `PLAYTOON_AI_MODEL` (default per provider, e.g. `llama-3.3-70b-versatile` on Groq), `PLAYTOON_AI_EFFORT` (Claude only),
 `PLAYTOON_ASR_MODEL` (default `small`), `PLAYTOON_ASR_MODEL_AR` (e.g. `large-v3-turbo`).
 
 ## Tests

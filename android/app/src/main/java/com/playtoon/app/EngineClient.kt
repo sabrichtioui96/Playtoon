@@ -138,6 +138,7 @@ object EngineClient {
             .put("effort", settings.aiEffort)
             .put("language", settings.language)
             .put("translate_to", settings.translateTo)   // "" = keep original language
+            .put("asr_vocabulary", settings.asrVocabulary)
         runCatching {
             http.newCall(Request.Builder().url(settings.serverUrl + "/config")
                 .put(body.toString().toRequestBody("application/json".toMediaType())).build()).execute().close()

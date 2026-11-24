@@ -30,6 +30,7 @@ data class Question(
     val discrepancies: List<Discrepancy>,
     val answer: Answer?,
     val processingMs: Long?,
+    val error: String? = null,
 ) {
     val sourceLabel: String
         get() = when {
@@ -70,6 +71,7 @@ data class Question(
                     )
                 },
                 processingMs = if (o.isNull("processing_ms")) null else o.optLong("processing_ms"),
+                error = if (o.isNull("error")) null else o.optString("error").ifBlank { null },
             )
         }
     }

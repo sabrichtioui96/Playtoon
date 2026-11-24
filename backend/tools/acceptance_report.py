@@ -56,9 +56,13 @@ def main() -> None:
             "were not tested.",
             "- **Answers in these runs come from the offline answerer** (arithmetic + a small demo fact table), because "
             "no Anthropic credentials were configured. The Claude path (`reasoning.py`) is implemented but was not "
-            "exercised by this run.",
-            "- **CPU latency.** On this machine (CPU only), Whisper takes ~3–6 s per spoken segment (`small`) and "
-            "~10–15 s (`large-v3-turbo`); OCR ~1–2 s per image. A GPU is recommended for real-time use.",
+            "exercised by this run. For the harder set this means only *detection* was scored, not answer correctness.",
+            "- **CPU latency.** On this machine (CPU only), Whisper `small` takes ~1.8 s per spoken segment once the "
+            "language is known (~3.4 s when it must be detected), `large-v3-turbo` ~10–15 s; OCR ~0.8 s per image. "
+            "Claude's own response time comes on top of the pipeline numbers in the latency table.",
+            "- **One harder case needs the host vocabulary:** on default settings Whisper hears Python's `len` as "
+            "\"LUN\" in the clean clip; entering the topic vocabulary (Settings) fixes it "
+            "(`test_hard_audio_with_host_vocabulary`).",
             "- **Test 10 uses an emulator** (Android 16 / API 36, x86_64) and an image upload as input; the in-app "
             "microphone and MediaProjection screen-capture flows were built but need a manual check on a device "
             "(they require interactive OS consent dialogs).",
@@ -74,6 +78,33 @@ def main() -> None:
                 out += ["Failure:", "```", v["failure"], "```", ""]
             if key == "test_10_android_displays_result" and v.get("screenshot"):
                 out += [f"![Android result]({Path(v['screenshot']).name})", ""]
+    # ---- harder English/French question set
+    hard = {k: v for k, v in res.items() if k.startswith("test_hard_")}
+    if hard:
+        passed = sum(v.get("outcome") == "passed" for v in hard.values())
+        out += ["", "# Harder question set (English + French)", "",
+                f"**{passed}/{len(hard)} passed.** Cases are defined in `backend/tests/hard_cases.py`; "
+                "detection is scored on every run, answer correctness only when Claude is the answerer "
+                "(`answer_correct` is `null` with the offline answerer).", "",
+                "| Case | Result | Detected question | Options |", "|---|---|---|---|"]
+        for k, v in hard.items():
+            det = v.get("detected") or "; ".join(r.get("detected", "") for r in v.get("results", [])) or "-"
+            opts = ", ".join(v.get("options") or []) or "-"
+            out.append(f"| `{k.replace('test_hard_', '')}` | {v.get('outcome', '?')} | {det.replace('|', '/')} | {opts.replace('|', '/')} |")
+        fails = {k: v for k, v in hard.items() if v.get("outcome") != "passed"}
+        for k, v in fails.items():
+            out += ["", f"### {k} (failed)", "```", (v.get("failure") or "")[-1200:], "```"]
+    # ---- latency
+    lat_file = DOCS / "latency.json"
+    if lat_file.exists():
+        lat = json.loads(lat_file.read_text())
+        runs = list(lat)
+        out += ["", "# Latency (question shown / speech ended -> answer delivered)", "",
+                "Pipeline latency measured by `backend/tools/latency_bench.py` with the offline answerer "
+                "(model time excluded; add Claude's response time on top). Median of 3 runs, seconds.", "",
+                "| Input | " + " | ".join(runs) + " |", "|---|" + "---|" * len(runs)]
+        for name in lat[runs[0]]:
+            out.append(f"| {name} | " + " | ".join(str(lat[r].get(name, {}).get("median_s", "-")) for r in runs) + " |")
     (DOCS / "ACCEPTANCE.md").write_text("\n".join(out), encoding="utf-8")
     print("wrote", DOCS / "ACCEPTANCE.md")
 

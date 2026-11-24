@@ -105,4 +105,5 @@ class ChatTracker:
         return Observation(text=q.text, modality=Modality.CHAT, confidence=0.97, language=lang,
                            options=q.options, complete=complete, origin=f"chat:{conv.conversation_id}/{mid}",
                            stream_key=f"chat:{conv.conversation_id}/{mid}", context=ctx or [],
-                           observed_at=now, metadata={"preamble": q.preamble})
+                           observed_at=now, metadata={"preamble": q.preamble,
+                                                      "final": bool(conv.messages[mid].final and complete)})

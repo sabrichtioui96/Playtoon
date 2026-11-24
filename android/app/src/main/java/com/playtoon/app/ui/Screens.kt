@@ -139,9 +139,17 @@ fun QuestionCard(q: Question) {
             }
             HorizontalDivider(Modifier.padding(vertical = 8.dp))
             val a = q.answer
-            if (a == null) {
-                Text(if (q.status == "analyzing") "Analyzing…" else "Waiting for a complete question…",
-                    style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (a == null && q.status == "failed") {
+                Text("Could not get an answer", style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.error)
+                Text(q.error ?: "The AI request failed. Check the engine log on the PC.",
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+            } else if (a == null) {
+                Text(when (q.status) {
+                    "analyzing" -> "Analyzing…"
+                    "incomplete" -> "Waiting for a complete question…"
+                    else -> "Preparing answer…"
+                }, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 if (q.status == "analyzing") LinearProgressIndicator(Modifier.fillMaxWidth().padding(top = 4.dp))
             } else {
                 Text("Suggested answer: ${a.suggested ?: "—"}", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
@@ -225,6 +233,7 @@ fun SettingsScreen(s: UiState, toggleScreen: () -> Unit, modifier: Modifier) {
     var effort by remember { mutableStateOf(st.aiEffort) }
     var lang by remember { mutableStateOf(st.language) }
     var translate by remember { mutableStateOf(st.translateTo.isNotBlank()) }
+    var vocab by remember { mutableStateOf(st.asrVocabulary) }
     LazyColumn(modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         item {
             Text("Connection", style = MaterialTheme.typography.titleMedium)
@@ -235,8 +244,11 @@ fun SettingsScreen(s: UiState, toggleScreen: () -> Unit, modifier: Modifier) {
         }
         item {
             Text("AI configuration", style = MaterialTheme.typography.titleMedium)
-            ChipRow(listOf("auto", "anthropic", "offline"), provider) { provider = it }
-            OutlinedTextField(model, { model = it }, label = { Text("Model") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+            ChipRow(listOf("auto", "groq", "xai", "anthropic", "offline"), provider) { provider = it }
+            Text("The API key is set on the PC running the engine (GROQ_API_KEY / XAI_API_KEY / ANTHROPIC_API_KEY).",
+                style = MaterialTheme.typography.bodySmall)
+            OutlinedTextField(model, { model = it }, label = { Text("Model (empty = provider default)") }, singleLine = true,
+                modifier = Modifier.fillMaxWidth())
             Text("Effort", style = MaterialTheme.typography.labelMedium)
             ChipRow(listOf("low", "medium", "high"), effort) { effort = it }
         }
@@ -244,6 +256,9 @@ fun SettingsScreen(s: UiState, toggleScreen: () -> Unit, modifier: Modifier) {
             Text("Language", style = MaterialTheme.typography.titleMedium)
             Text("Spoken language (auto-detects English, French and Arabic)", style = MaterialTheme.typography.bodySmall)
             ChipRow(listOf("auto", "en", "fr", "ar"), lang) { lang = it }
+            OutlinedTextField(vocab, { vocab = it }, label = { Text("Topic vocabulary (optional)") },
+                supportingText = { Text("Names and terms for this game, e.g. \"Python, len(), Abuja\". Improves spelling in speech.") },
+                modifier = Modifier.fillMaxWidth())
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Switch(translate, { translate = it })
                 Spacer(Modifier.width(8.dp))
@@ -252,6 +267,7 @@ fun SettingsScreen(s: UiState, toggleScreen: () -> Unit, modifier: Modifier) {
             Button(onClick = {
                 st.aiProvider = provider; st.aiModel = model; st.aiEffort = effort; st.language = lang
                 st.translateTo = if (translate) "en" else ""
+                st.asrVocabulary = vocab.trim()
                 EngineClient.pushConfig()
             }) { Text("Apply") }
         }

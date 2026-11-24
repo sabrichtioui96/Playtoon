@@ -114,13 +114,37 @@ def proper_nouns(text: str) -> set[str]:
     return out
 
 
-def starts_like_question(sentence: str, lang: str) -> bool:
+LABEL_RE = re.compile(r"^\s*(?:(?:question|q|n°|no\.?|quiz)\s*\d+\s*[:.)\-–]|(?:next|suivante?|bonus|question)\s*[:\-–])\s*", re.I)
+
+# Openers that begin a question's *setup* rather than a question sentence. They separate a heading
+# from the question but do not by themselves make a sentence a question.
+SETUP_OPENERS = {
+    "en": ["if", "given", "suppose", "assuming", "according to", "in which", "in what", "on which", "at what",
+           "for which", "from which", "to which", "of which", "by how", "true or false"],
+    "fr": ["si", "soit", "sachant", "selon", "en quelle", "à quelle", "a quelle", "dans quel", "dans quelle",
+           "de quel", "de quelle", "pour quel", "par quel", "vrai ou faux"],
+}
+
+
+def strip_label(text: str) -> str:
+    """'Question 4 : quelle planète…' -> 'quelle planète…'; 'Next: what is…' -> 'what is…'."""
+    out = LABEL_RE.sub("", text, count=1)
+    return out if len(out) >= 6 else text
+
+
+def _starts_with(s: str, st: str) -> bool:
+    return s == st or (s.startswith(st) and (len(s) == len(st) or not s[len(st)].isalnum())) \
+        or (st.endswith("'") and s.startswith(st))
+
+
+def starts_like_question(sentence: str, lang: str, include_setup: bool = False) -> bool:
     s = sentence.strip().lower().lstrip("«\"'“(¿")
     s = re.sub(r"^(question|q)\s*\d*\s*[:.)-]\s*", "", s)
     s = re.sub(r"^\d+\s*[.)-]\s*", "", s)
     for l in ([lang] if lang in QUESTION_STARTERS else []) + [k for k in QUESTION_STARTERS if k != lang]:
-        for st in QUESTION_STARTERS[l]:
-            if s == st or s.startswith(st + " ") or (st.endswith("'") and s.startswith(st)):
+        starters = QUESTION_STARTERS[l] + (SETUP_OPENERS.get(l, []) if include_setup else [])
+        for st in starters:
+            if _starts_with(s, st):
                 return True
             if l == "ar" and s.startswith(st):     # Arabic proclitics (وما، فهل)
                 return True
@@ -203,7 +227,14 @@ def parse_options(lines: list[str]) -> tuple[list[str], list[int]]:
 def _starts_new_question(block: str, nxt: str, lang: str) -> bool:
     """Is `nxt` a new question rather than the wrapped continuation of `block`?
     "Space Trivia - Round 2" / "Which planet ..." -> new.  "... which country" / "was he born?" -> wrapped."""
-    if not nxt or not starts_like_question(nxt, lang):
+    if not nxt:
+        return False
+    # A short line without punctuation followed by a question line is a heading ("Bonus round",
+    # "Algebra - Q7", "Calcul mental"), even when the question opens with "If…" / "In which…".
+    if len(block.split()) <= 4 and not re.search(r"[?.!:,]$", block) and (
+            is_question_sentence(nxt, lang) or starts_like_question(nxt, lang, include_setup=True)):
+        return True
+    if not starts_like_question(nxt, lang):
         return False
     last = re.findall(r"[\w'’-]+", block.lower())
     if last and last[-1] in TRAILING_INCOMPLETE.get(lang, set()) | TRAILING_INCOMPLETE["en"]:
@@ -212,16 +243,118 @@ def _starts_new_question(block: str, nxt: str, lang: str) -> bool:
     return not first.islower()          # Arabic has no case: isLower() is False -> treated as new
 
 
+_SPOKEN_LEAD = {
+    "en": r"(?:is it|is that|was it|are they|would it be|could it be|the options are|your options are|choose between|choose from|pick one)",
+    "fr": r"(?:est-ce|serait-ce|s'agit-il de|les choix sont|choisissez entre|c'est)",
+}
+_SPOKEN_OR = {"en": r"\s*,?\s+or\s+", "fr": r"\s*,?\s+ou(?:\s+bien)?\s+"}
+_LETTER_OPT = re.compile(r"(?:^|[\s,;:.])(?:option\s+)?([A-D])[\s,.:)\-]+(.+?)(?=(?:[\s,;.]+(?:option\s+)?[A-D][\s,.:)\-]+)|[?.!]?$)", re.I)
+
+
+def parse_option_list(text: str, lang: str) -> list[str]:
+    """The whole utterance is just a list of choices ("Is it oxygen, nitrogen or helium?",
+    "L'Atlantique, l'Indien ou le Pacifique ?", "A, Mars. B, Jupiter.") -> the choices, else []."""
+    if lang not in _SPOKEN_LEAD:
+        return []
+    s = text.strip()
+    letters = [o.strip(" ,.;?") for _, o in _LETTER_OPT.findall(s)] if re.match(r"(option\s+)?A[\s,.:)\-]", s, re.I) else []
+    if len(letters) >= 2:
+        return letters
+    if len(split_sentences(s)) != 1:
+        return []
+    body = re.sub(r"^" + _SPOKEN_LEAD[lang] + r"\s*:?\s*", "", s, flags=re.I).rstrip(" ?؟.!")
+    parts = re.split(_SPOKEN_OR[lang], body, flags=re.I)
+    if len(parts) != 2:
+        return []
+    items = [p.strip() for p in re.split(r"\s*,\s*", parts[0]) if p.strip()] + [parts[1].strip()]
+    if 2 <= len(items) <= 6 and all(0 < len(i.split()) <= 5 for i in items):
+        return [i[0].upper() + i[1:] for i in items]
+    return []
+
+
+def split_spoken_options(text: str, lang: str) -> tuple[str, list[str]]:
+    """Extract answer choices from speech, where there is no layout to rely on:
+      "Which gas do plants absorb? Is it oxygen, nitrogen, carbon dioxide, or helium?"
+      "Quel est le plus grand océan ? L'Atlantique, l'Indien ou le Pacifique ?"
+      "Which planet is largest? A, Mars. B, Jupiter. C, Venus."
+    Returns (question_without_the_choice_list, options) or (text, []) when there is no list."""
+    if lang not in _SPOKEN_LEAD:
+        return text, []
+    s = text.strip()
+    # Lettered options spoken aloud
+    m = re.search(r"[?:]\s*((?:option\s+)?A[\s,.:)\-].+)$", s, re.I | re.S)
+    if m:
+        opts = [o.strip(" ,.;?") for _, o in _LETTER_OPT.findall(m.group(1))]
+        if len(opts) >= 2:
+            return s[: m.start() + 1].strip(), opts
+    sents = split_sentences(s)
+    if not sents:
+        return text, []
+    last = sents[-1]
+    body = re.sub(r"^" + _SPOKEN_LEAD[lang] + r"\s*:?\s*", "", last, flags=re.I)
+    led = body != last
+    body = body.rstrip(" ?؟.!")
+    parts = re.split(_SPOKEN_OR[lang], body, flags=re.I)
+    if len(parts) != 2:
+        return text, []
+    items = [p.strip() for p in re.split(r"\s*,\s*", parts[0]) if p.strip()] + [parts[1].strip()]
+    short = all(0 < len(i.split()) <= 5 for i in items)
+    if not short or not (2 <= len(items) <= 6):
+        return text, []
+    if len(sents) >= 2 and (led or not starts_like_question(last, lang)):
+        return " ".join(sents[:-1]).strip(), [i[0].upper() + i[1:] for i in items]
+    if led and len(sents) == 1:
+        # "Is it oxygen or helium?" alone: keep the sentence as the question
+        return s, [i[0].upper() + i[1:] for i in items]
+    return text, []
+
+
 def split_sentences(text: str) -> list[str]:
     parts = re.split(r"(?<=[?؟？.!])\s+", text.strip())
     return [p.strip() for p in parts if p.strip()]
 
 
-def extract_questions(raw_text: str, lang_hint: str | None = None) -> list[ParsedQuestion]:
+ANAPHOR_RE = re.compile(r"\b(she|he|it|they|its|their|her|his|them|this|that|these|those|il|elle|ils|elles|"
+                        r"celui-ci|celle-ci|ce|cette|ces)\b", re.I)
+_INTRO_SENT_RE = re.compile(r"^(welcome|hi|hello|bonjour|bienvenue|correct|bravo|great|well done|next|read carefully|"
+                            r"lisez attentivement|good luck|bonne chance)\b", re.I)
+
+
+NUMBER_PREFIX_RE = re.compile(r"^\s*(?:Q\s*)?\(?\d{1,3}\s*[.)\-–:]\s+", re.I)
+
+
+def _numbered_question(line: str, lang: str) -> bool:
+    """'12. What is a test plan?' / 'Q3) Which planet…?' — a numbered line whose body is itself a question
+    (ends with '?' or opens like one and is sentence-length). Short bodies ('2. Saturn') stay options."""
+    m = NUMBER_PREFIX_RE.match(line)
+    if not m:
+        return False
+    body = line[m.end():].strip()
+    if body.endswith(("?", "؟", "？")) and len(body.split()) >= 3:
+        return True
+    return starts_like_question(body, lang) and len(body.split()) >= 5
+
+
+def _is_intro(sentence: str) -> bool:
+    return bool(_INTRO_SENT_RE.match(sentence.strip())) and not re.search(r"\d", sentence)
+
+
+def _is_fill_blank(block: str, lang: str) -> bool:
+    words = re.findall(r"[\w'’-]+", block.lower())
+    if len(words) < 4 or re.search(r"[?!]$", block) or starts_like_question(block, lang):
+        return False
+    stem = block.rstrip(" .")
+    last = re.findall(r"[\w'’-]+", stem.lower())[-1]
+    return last in TRAILING_INCOMPLETE.get(lang, set()) | {"is", "are", "was", "were", "called", "named", "equals",
+                                                           "est", "sont", "appelé", "appelée", "vaut", "égal"}
+
+
+def extract_questions(raw_text: str, lang_hint: str | None = None, final: bool = False) -> list[ParsedQuestion]:
     """Find question(s) in a block of text (OCR output, DOM text, chat message, transcript).
 
     Multi-line layout is respected: answer-option lines following a question attach to it.
-    Several consecutive questions in one block yield several ParsedQuestions.
+    Several consecutive questions in one block yield several ParsedQuestions. `final` means the
+    content will not change any more (a still image), which allows fill-in-the-blank detection.
     """
     text = raw_text.translate(str.maketrans({"‏": "", "‎": ""}))
     raw_lines = [_clean_line(l) for l in text.splitlines() if _clean_line(l)]
@@ -235,6 +368,9 @@ def extract_questions(raw_text: str, lang_hint: str | None = None) -> list[Parse
             lines[-1] += " " + l
         else:
             lines.append(l)
+
+    # Numbered questions ("5. What is regression testing?") are questions, not answer choices "5."
+    lines = [NUMBER_PREFIX_RE.sub("", l, count=1) if _numbered_question(l, lang) else l for l in lines]
 
     # Expand inline options "A) x B) y C) z" on a single line
     expanded: list[str] = []
@@ -306,7 +442,23 @@ def extract_questions(raw_text: str, lang_hint: str | None = None) -> list[Parse
                 k = j + used[-1] + 1
             else:
                 k = j
-            preamble = " ".join(pending_preamble + pre).strip()
+            groups[0] = strip_label(groups[0])
+            # Word problems: statements in the same paragraph that carry data ("$1.20 each", "15 pens")
+            # or that the question refers back to ("How much change does SHE receive?") are part of it.
+            refers_back = bool(ANAPHOR_RE.search(groups[0]))
+            prev_data = [p for p in pending_preamble if re.search(r"\d", p) and len(p.split()) >= 5 and not _is_intro(p)]
+            if pre and (any(re.search(r"\d", p) for p in pre) or refers_back):
+                setup = [p for p in pre if not _is_intro(p)]
+                if refers_back:
+                    setup = prev_data + setup
+                groups[0] = " ".join(setup + [groups[0]]).strip()
+                preamble = " ".join(p for p in pending_preamble if p not in setup).strip()
+            elif refers_back and prev_data:
+                # the data sentence sits on its own line above ("…roule pendant 2 h 45." / "À quelle heure arrive-t-il ?")
+                groups[0] = " ".join(prev_data + [groups[0]]).strip()
+                preamble = " ".join(p for p in pending_preamble if p not in prev_data).strip()
+            else:
+                preamble = " ".join(pending_preamble + pre).strip()
             for gi, g in enumerate(groups):
                 is_last = gi == len(groups) - 1
                 complete = not looks_incomplete(g, lang)
@@ -320,6 +472,11 @@ def extract_questions(raw_text: str, lang_hint: str | None = None) -> list[Parse
             # A trailing fragment that starts like a question ("Which planet has the") -> incomplete question
             if j >= len(lines) and starts_like_question(block, lang) and not block.endswith("."):
                 results.append(ParsedQuestion(text=block, complete=False, language=lang,
+                                              preamble=" ".join(pending_preamble)))
+            elif final and _is_fill_blank(block, lang):
+                # In finished content (a still image) a sentence that stops on "is"/"of"/"est"… is a
+                # fill-in-the-blank whose "____" OCR could not read.
+                results.append(ParsedQuestion(text=block.rstrip(" .") + " ____.", complete=True, language=lang,
                                               preamble=" ".join(pending_preamble)))
             else:
                 pending_preamble = (pending_preamble + [block])[-2:]

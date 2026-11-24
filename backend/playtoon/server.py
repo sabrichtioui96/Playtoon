@@ -18,10 +18,12 @@ import logging
 import os
 import tempfile
 import uuid
+from pathlib import Path
 from contextlib import asynccontextmanager
 
 from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
 from .audio import SAMPLE_RATE, load_audio_file, pcm16_from_float
@@ -36,9 +38,11 @@ engine: Engine | None = None
 def build_config() -> EngineConfig:
     cfg = EngineConfig()
     cfg.asr_model = os.environ.get("PLAYTOON_ASR_MODEL", cfg.asr_model)
+    cfg.asr_vocabulary = os.environ.get("PLAYTOON_ASR_VOCAB", "")
     cfg.reasoning.provider = os.environ.get("PLAYTOON_AI_PROVIDER", cfg.reasoning.provider)
     cfg.reasoning.model = os.environ.get("PLAYTOON_AI_MODEL", cfg.reasoning.model)
     cfg.reasoning.effort = os.environ.get("PLAYTOON_AI_EFFORT", cfg.reasoning.effort)
+    cfg.reasoning.fast_mode = os.environ.get("PLAYTOON_AI_FAST", "0") == "1"
     return cfg
 
 
@@ -94,11 +98,30 @@ class ConfigPayload(BaseModel):
     effort: str | None = None
     language: str | None = None
     translate_to: str | None = None
+    fast_mode: bool | None = None
+    asr_vocabulary: str | None = None
+
+
+VIEWER = Path(__file__).parent / "static" / "viewer.html"
+
+
+@app.get("/", response_class=HTMLResponse)
+async def viewer():
+    """Live read-only view of detected questions and answers for any browser on the network."""
+    return HTMLResponse(VIEWER.read_text(encoding="utf-8"))
+
+
+@app.get("/favicon.ico", include_in_schema=False)
+async def favicon():
+    from fastapi import Response
+    return Response(status_code=204)
 
 
 @app.get("/health")
 async def health():
-    return {"ok": True, "answerer": E().answerer.name}
+    a = E().answerer
+    err = getattr(a, "last_error", None)
+    return {"ok": err is None, "answerer": a.name, "answerer_error": err}
 
 
 @app.get("/stats")
@@ -114,7 +137,10 @@ async def get_config():
 @app.put("/config")
 async def put_config(p: ConfigPayload):
     eng = E()
-    eng.set_reasoning(provider=p.provider, model=p.model, effort=p.effort, translate_to=p.translate_to)
+    eng.set_reasoning(provider=p.provider, model=p.model, effort=p.effort, translate_to=p.translate_to,
+                      fast_mode=p.fast_mode)
+    if p.asr_vocabulary is not None:
+        eng.cfg.asr_vocabulary = p.asr_vocabulary[:300]
     if p.language in ("auto", "en", "fr", "ar"):
         eng.cfg.language = p.language
         for s in eng.audio_sessions.values():

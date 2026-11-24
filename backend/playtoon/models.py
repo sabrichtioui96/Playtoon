@@ -96,6 +96,7 @@ class DetectedQuestion:
     first_seen: float = 0.0
     last_seen: float = 0.0
     detected_to_answer_ms: int | None = None
+    error: str | None = None
 
     @property
     def source(self) -> list[str]:
@@ -121,5 +122,6 @@ class DetectedQuestion:
             "revision": self.revision,
             "answer": self.answer.to_dict() if self.answer else None,
             "processing_ms": self.detected_to_answer_ms,
+            "error": self.error,
             "origins": sorted({o.origin for o in self.observations if o.origin})[:10],
         }

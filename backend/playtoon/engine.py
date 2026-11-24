@@ -13,6 +13,7 @@ from typing import Any
 import numpy as np
 
 from .audio import AudioSegmenter, UtteranceAssembler, get_transcriber, pcm16_from_float
+from .text_utils import detect_language
 from .chat import ChatTracker
 from .fusion import FusionConfig, QuestionManager
 from .models import DetectedQuestion, Modality, Observation, Status, utc_now_iso
@@ -26,13 +27,16 @@ log = logging.getLogger(__name__)
 class EngineConfig:
     asr_model: str = "small"
     language: str = "auto"                 # auto | en | fr | ar  (audio language preference)
+    asr_vocabulary: str = ""               # host-supplied topic terms that bias speech recognition spelling
     answer_workers: int = 2
-    max_audio_wait_s: float = 5.0           # hold visual-only questions while speech is being transcribed
+    max_audio_wait_s: float = 1.0           # hold progressive visual-only questions while speech is transcribed
+    speculative: bool = True                # start the model during the settle window
+    speculative_delay_s: float = 0.25
     reasoning: ReasoningConfig = field(default_factory=ReasoningConfig)
     fusion: FusionConfig = field(default_factory=FusionConfig)
 
     def public(self) -> dict[str, Any]:
-        return {"asr_model": self.asr_model, "language": self.language,
+        return {"asr_model": self.asr_model, "language": self.language, "asr_vocabulary": self.asr_vocabulary,
                 "reasoning": asdict(self.reasoning), "fusion": asdict(self.fusion)}
 
 
@@ -48,6 +52,8 @@ class AudioSession:
         self.assembler = UtteranceAssembler()
         self.in_speech = False
         self.pending = 0
+        self.sticky_lang: str | None = None
+        self.sticky_prob = 0.0
         self._lock = asyncio.Lock()
         self._tasks: set[asyncio.Task] = set()
         self.started = time.monotonic()
@@ -67,21 +73,20 @@ class AudioSession:
         elif ev.kind == "segment":
             self.in_speech = False
             self.pending += 1
-            t = asyncio.create_task(self._transcribe(ev.audio))
+            t = asyncio.create_task(self._transcribe(ev.audio, time.monotonic()))
             self._tasks.add(t)
             t.add_done_callback(self._tasks.discard)
 
-    async def _transcribe(self, audio: np.ndarray) -> None:
+    async def _transcribe(self, audio: np.ndarray, segment_end: float) -> None:
         try:
             async with self._lock:               # keep segment order
-                lang = None if self.language == "auto" else self.language
-                hint = self.engine.recent_visual_text()
-                tr = await self.engine.run_cpu(get_transcriber(self.engine.cfg.asr_model).transcribe, audio, lang, hint)
+                tr = await self._transcribe_fast(audio)
                 await self.engine.broadcast("transcript.final", {
                     "session": self.id, "text": tr.text, "language": tr.language,
                     "language_prob": round(tr.language_prob, 3), "confidence": round(tr.confidence, 3),
                     "duration_s": round(tr.duration_s, 2), "asr_ms": tr.elapsed_ms, "source": self.label})
-                obs = self.assembler.add(tr, more_coming=self.in_speech or self.pending > 1)
+                obs = self.assembler.add(tr, more_coming=self.in_speech or self.pending > 1,
+                                         segment_end=segment_end)
                 for o in obs:
                     o.origin = f"audio:{self.label}"
                 await self.engine.ingest(obs)
@@ -89,6 +94,26 @@ class AudioSession:
             log.exception("transcription failed")
         finally:
             self.pending -= 1
+
+    async def _transcribe_fast(self, audio: np.ndarray):
+        """Language detection costs a second full Whisper encoder pass (~1.6 s on CPU). Once a
+        session has confidently detected its language, later segments reuse it; detection runs
+        again only if the result looks wrong (low confidence or the text reads as another language)."""
+        tx = get_transcriber(self.engine.cfg.asr_model)
+        hint = " ".join(x for x in (self.engine.cfg.asr_vocabulary, self.engine.recent_visual_text()) if x) or None
+        if self.language != "auto":
+            return await self.engine.run_cpu(tx.transcribe, audio, self.language, hint)
+        if self.sticky_lang:
+            tr = await self.engine.run_cpu(tx.transcribe, audio, self.sticky_lang, hint)
+            text_lang = detect_language(tr.text) if len(tr.text.split()) >= 4 else self.sticky_lang
+            if tr.confidence >= 0.45 and text_lang in (self.sticky_lang, "und"):
+                tr.language_prob = self.sticky_prob
+                return tr
+            self.sticky_lang = None              # language changed or poor result: detect again
+        tr = await self.engine.run_cpu(tx.transcribe, audio, None, hint)
+        if tr.language_prob >= 0.9 and tr.confidence >= 0.45:
+            self.sticky_lang, self.sticky_prob = tr.language, tr.language_prob
+        return tr
 
     async def finish(self) -> None:
         for ev in self.segmenter.flush():
@@ -119,6 +144,8 @@ class Engine:
         self._mlock = asyncio.Lock()
         self.jobs: dict[str, dict] = {}
         self.capture: dict[str, dict] = {}        # active capture indicators (privacy)
+        self._spec: dict[str, tuple] = {}
+        self.model_calls = self.spec_started = self.spec_used = 0
 
     # ---------------------------------------------------------------- lifecycle
     async def start(self) -> None:
@@ -144,6 +171,8 @@ class Engine:
 
     def set_reasoning(self, **kw) -> None:
         for k, v in kw.items():
+            if k in ("model", "provider", "effort") and v == "":
+                continue                         # empty = keep the server's setting / provider default
             if hasattr(self.cfg.reasoning, k) and v is not None:
                 setattr(self.cfg.reasoning, k, v)
         self.answerer = make_answerer(self.cfg.reasoning)
@@ -176,6 +205,8 @@ class Engine:
                     touched.append(q)
                     if ev != "question.duplicate":
                         await self.broadcast(ev, q.to_dict())
+            for q in {id(x): x for x in touched}.values():
+                self._speculate(q)
         return touched
 
     async def ingest_image(self, data: bytes, origin: str = "image", lang_hint: str | None = None) -> dict:
@@ -265,13 +296,55 @@ class Engine:
 
     # ---------------------------------------------------------------- scheduling & answering
     def _hold(self, q: DetectedQuestion, now: float) -> bool:
+        """Briefly delay a progressive on-screen question while speech is being transcribed, so a
+        spoken copy can merge first. Final content is never held: if the spoken copy arrives after
+        the answer, it merges without a second request."""
+        if self.manager.is_final(q):
+            return False
         audio_busy = any(s.busy for s in self.audio_sessions.values())
         visual_only = all(m.family == "visual" for m in q.modalities)
         return audio_busy and visual_only and (now - q.first_seen) < self.cfg.max_audio_wait_s
 
+    # ---- speculative answering: start the model while the settle window is still open
+    def _speculate(self, q: DetectedQuestion) -> None:
+        if not self.cfg.speculative or q.status != Status.SETTLING or self.manager.is_final(q):
+            return
+        fp = self.manager.fingerprint(q)
+        cur = self._spec.get(q.question_id)
+        if cur is not None:
+            if cur[0] == fp:
+                return
+            cur[1].cancel()
+        self._spec[q.question_id] = (fp, asyncio.create_task(self._spec_run(q, fp)))
+
+    async def _spec_run(self, q: DetectedQuestion, fp: tuple):
+        await asyncio.sleep(self.cfg.speculative_delay_s)      # debounce rapidly changing text
+        if self.manager.fingerprint(q) != fp:
+            return None
+        self.model_calls += 1
+        self.spec_started += 1
+        return await self.answerer.answer(q)
+
+    async def _get_answer(self, q: DetectedQuestion):
+        spec = self._spec.pop(q.question_id, None)
+        if spec is not None:
+            fp, task = spec
+            if fp == self.manager.fingerprint(q):
+                try:
+                    ans = await task
+                except (asyncio.CancelledError, Exception):
+                    ans = None
+                if ans is not None:
+                    self.spec_used += 1
+                    return ans
+            else:
+                task.cancel()
+        self.model_calls += 1
+        return await self.answerer.answer(q)
+
     async def _scheduler(self) -> None:
         while True:
-            await asyncio.sleep(0.1)
+            await asyncio.sleep(0.05)
             now = time.monotonic()
             async with self._mlock:
                 ready = self.manager.due(now, hold=self._hold)
@@ -297,16 +370,18 @@ class Engine:
             await self.broadcast("question.analyzing", q.to_dict())
             t0 = time.monotonic()
             try:
-                ans = await self.answerer.answer(q)
+                ans = await self._get_answer(q)
                 if q.revision != rev:          # superseded while we were waiting on the model
                     continue
                 q.answer = ans
+                q.error = None
                 q.status = Status.ANSWERED
             except Exception as e:
                 log.exception("answering failed")
                 q.status = Status.FAILED
                 q.answer = None
-                await self.broadcast("question.failed", {**q.to_dict(), "error": str(e)})
+                q.error = str(e)
+                await self.broadcast("question.failed", q.to_dict())
                 continue
             q.detected_to_answer_ms = int((time.monotonic() - q.first_seen) * 1000)
             await self.broadcast("question.answered", q.to_dict())
@@ -315,6 +390,10 @@ class Engine:
     async def reset(self) -> None:
         """Clear question history and conversation state (app "clear history" / test isolation)."""
         async with self._mlock:
+            for _, task in self._spec.values():
+                task.cancel()
+            self._spec.clear()
+            self.model_calls = self.spec_started = self.spec_used = 0
             self.manager = QuestionManager(self.cfg.fusion)
             self.chat = ChatTracker()
             self.video_streams.clear()
@@ -325,6 +404,8 @@ class Engine:
     def stats(self) -> dict:
         qs = list(self.manager.questions.values())
         return {"questions": len(qs), "ai_requests": self.manager.ai_requests,
+                "model_calls": self.model_calls, "speculative_started": self.spec_started,
+                "speculative_used": self.spec_used,
                 "suppressed_duplicates": self.manager.suppressed_duplicates,
                 "by_status": {s.value: sum(q.status == s for q in qs) for s in Status},
                 "clients": len(self.clients), "audio_sessions": len(self.audio_sessions),

@@ -74,3 +74,13 @@ def test_chat_follow_up_and_roles():
     o2 = c.ingest("c", "4", "assistant", "And what about Australia?", True)
     assert len(o1) == 1 and o1[0].metadata["follow_up"] is False
     assert o2[0].metadata["follow_up"] is True and any("Japan" in x for x in o2[0].context)
+
+
+def test_numbered_questions_are_not_options():
+    """Q&A pages number their questions ("1. What is QA?"); those must not be eaten as choices "1."."""
+    qs = extract_questions("40 QA Interview Questions\n1. What is Quality Assurance?\nQA ensures quality.\n"
+                           "2. What is the difference between QA and QC?\nQA is process oriented.\n3. What is a test plan?")
+    assert [q.text for q in qs] == ["What is Quality Assurance?", "What is the difference between QA and QC?",
+                                    "What is a test plan?"]
+    mcq = extract_questions("Which of these is a prime number?\n1. 21\n2. 27\n3. 29\n4. 33")
+    assert mcq[0].options == ["21", "27", "29", "33"]

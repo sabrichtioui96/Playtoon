@@ -44,6 +44,7 @@ class ReasoningConfig:
     provider: str = "auto"          # auto | anthropic | offline
     model: str = "claude-opus-5-5"
     effort: str = "low"             # quiz answers are latency-sensitive; raise for harder material
+    fast_mode: bool = False         # Opus 5.5 fast mode: up to ~2.5x faster output at 2x token price
     translate_to: str | None = None  # None = keep original language (default per spec)
 
 
@@ -62,6 +63,7 @@ def build_user_prompt(q: DetectedQuestion) -> str:
 
 class ClaudeAnswerer:
     name = "anthropic"
+    last_error: str | None = None
 
     def __init__(self, cfg: ReasoningConfig):
         import anthropic
@@ -83,7 +85,14 @@ class ClaudeAnswerer:
                                "format": {"type": "json_schema", "schema": ANSWER_SCHEMA}},
                 betas=["server-side-fallback-2026-07-01"],
                 fallbacks="default",
+                **({"speed": "fast"} if self.cfg.fast_mode else {}),
             )
+        except anthropic.AuthenticationError as e:
+            self.last_error = "Anthropic API key rejected (401): check ANTHROPIC_API_KEY on the PC running Playtoon"
+            raise RuntimeError(self.last_error) from e
+        except anthropic.PermissionDeniedError as e:
+            self.last_error = f"Anthropic API access denied (403): {e.message}"
+            raise RuntimeError(self.last_error) from e
         except anthropic.RateLimitError as e:
             raise RuntimeError(f"rate limited: {e}") from e
         except anthropic.APIStatusError as e:
@@ -91,6 +100,7 @@ class ClaudeAnswerer:
         except anthropic.APIConnectionError as e:
             raise RuntimeError(f"connection error: {e}") from e
         ms = int((time.perf_counter() - t0) * 1000)
+        self.last_error = None
         if resp.stop_reason == "refusal":
             return Answer(None, None, 0.0, "The model declined to answer this question.", self.name, resp.model, ms)
         text = next((b.text for b in resp.content if b.type == "text"), "{}")
@@ -200,12 +210,105 @@ def has_anthropic_credentials() -> bool:
         return False
 
 
+# OpenAI-compatible chat-completions providers. Groq has a free tier (rate-limited); xAI (Grok) is paid.
+OPENAI_COMPAT = {
+    "groq": dict(base_url="https://api.groq.com/openai/v1", key_env="GROQ_API_KEY",
+                 default_model="openai/gpt-oss-120b"),
+    "xai": dict(base_url="https://api.x.ai/v1", key_env="XAI_API_KEY", default_model="grok-4"),
+}
+OPENAI_COMPAT["grok"] = OPENAI_COMPAT["xai"]
+
+
+class OpenAICompatAnswerer:
+    """Answers through an OpenAI-compatible /chat/completions endpoint (Groq, xAI Grok) with JSON output."""
+
+    def __init__(self, provider: str, cfg: ReasoningConfig):
+        import os
+
+        import httpx
+        spec = OPENAI_COMPAT[provider]
+        self.name = "xai" if provider == "grok" else provider
+        self.cfg = cfg
+        key = os.environ.get(spec["key_env"], "").strip()
+        if not key:
+            raise RuntimeError(f"{spec['key_env']} is not set")
+        self.key_env = spec["key_env"]
+        # a Claude model id left in the config means "use this provider's default model"
+        self.model = cfg.model if cfg.model and not cfg.model.startswith("claude") else spec["default_model"]
+        self.client = httpx.AsyncClient(base_url=spec["base_url"], timeout=60.0,
+                                        headers={"Authorization": f"Bearer {key}"})
+        self.last_error: str | None = None
+
+    async def answer(self, q: DetectedQuestion) -> Answer:
+        import httpx
+        t0 = time.perf_counter()
+        user = build_user_prompt(q) + (
+            f"\nTranslate the question to '{self.cfg.translate_to}' first and write the explanation in that language."
+            if self.cfg.translate_to else "")
+        body = {
+            "model": self.model,
+            "temperature": 0,
+            "max_tokens": 4000,
+            "response_format": {"type": "json_object"},
+            # gpt-oss / qwen reasoning models: keep thinking short for quiz latency, hide it from the reply
+            **({"reasoning_effort": self.cfg.effort if self.cfg.effort in ("low", "medium", "high") else "low",
+                "include_reasoning": False} if self.model.startswith(("openai/gpt-oss", "qwen/")) else {}),
+            "messages": [
+                {"role": "system", "content": SYSTEM_PROMPT + "\nReply with only a JSON object with the keys: "
+                 "suggested_answer (string), option_index (integer, -1 if none), confidence (number 0-1), "
+                 "explanation (string), used_variant (string)."},
+                {"role": "user", "content": user},
+            ],
+        }
+        try:
+            r = await self.client.post("/chat/completions", json=body)
+        except httpx.HTTPError as e:
+            raise RuntimeError(f"{self.name} connection error: {e}") from e
+        if r.status_code in (401, 403):
+            self.last_error = f"{self.name} API key rejected ({r.status_code}): check {self.key_env} on the PC running Playtoon"
+            raise RuntimeError(self.last_error)
+        if r.status_code == 429:
+            raise RuntimeError(f"{self.name} rate limit reached (free tier?): {r.text[:200]}")
+        if r.status_code >= 400:
+            raise RuntimeError(f"{self.name} API error {r.status_code}: {r.text[:300]}")
+        self.last_error = None
+        ms = int((time.perf_counter() - t0) * 1000)
+        text = r.json()["choices"][0]["message"]["content"] or "{}"
+        try:
+            data = json.loads(text)
+        except json.JSONDecodeError:
+            m = re.search(r"\{.*\}", text, re.S)
+            data = json.loads(m.group(0)) if m else {}
+        idx = data.get("option_index", -1)
+        idx = idx if isinstance(idx, int) and 0 <= idx < len(q.options) else None
+        ans = data.get("suggested_answer") or (q.options[idx] if idx is not None else None)
+        try:
+            conf = float(data.get("confidence", 0.0))
+        except (TypeError, ValueError):
+            conf = 0.0
+        return Answer(ans or None, idx, max(0.0, min(1.0, conf)), str(data.get("explanation", "")),
+                      self.name, self.model, ms)
+
+
 def make_answerer(cfg: ReasoningConfig):
+    """provider: offline | anthropic | groq | xai (alias grok) | auto.
+    auto picks the first configured key: Anthropic, then Groq, then xAI; otherwise offline."""
+    import os
     if cfg.provider == "offline":
         return OfflineAnswerer()
+    if cfg.provider in OPENAI_COMPAT:
+        try:
+            return OpenAICompatAnswerer(cfg.provider, cfg)
+        except Exception as e:
+            log.warning("%s unavailable (%s); using offline answerer", cfg.provider, e)
+            return OfflineAnswerer()
     if cfg.provider == "anthropic" or (cfg.provider == "auto" and has_anthropic_credentials()):
         try:
             return ClaudeAnswerer(cfg)
         except Exception as e:     # missing SDK / creds
             log.warning("Claude unavailable (%s); using offline answerer", e)
+    if cfg.provider == "auto":
+        for p in ("groq", "xai"):
+            if os.environ.get(OPENAI_COMPAT[p]["key_env"]):
+                return OpenAICompatAnswerer(p, cfg)
     return OfflineAnswerer()

@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Playtoon Live</title>
+<style>
+  :root {
+    --bg: #f6f7fb; --card: #ffffff; --text: #1d2130; --muted: #646b7d; --chip: #e8ebf5; --chip-text: #2f3a5a;
+    --ok: #2e7d32; --ok-bg: rgba(46,125,50,.14); --warn: #e65100; --err: #c62828; --border: #e2e5ee; --rec: #d32f2f;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #14161c; --card: #1e212a; --text: #e7e9ef; --muted: #9aa1b2; --chip: #2a2f3c; --chip-text: #cfd6ea;
+            --ok: #66bb6a; --ok-bg: rgba(102,187,106,.16); --warn: #ffa726; --err: #ef5350; --border: #2c303c; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  header { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+           padding: 12px 16px; background: var(--card); border-bottom: 1px solid var(--border); }
+  header h1 { font-size: 18px; margin: 0 8px 0 0; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--err); display: inline-block; }
+  .dot.on { background: var(--ok); } .dot.wait { background: #f9a825; }
+  .status { color: var(--muted); font-size: 13px; }
+  .spacer { flex: 1; }
+  .rec { background: var(--rec); color: #fff; font-size: 12px; font-weight: 700; padding: 3px 9px; border-radius: 10px; }
+  button { font: inherit; padding: 6px 12px; border-radius: 8px; border: 1px solid var(--border); background: var(--card); color: var(--text); cursor: pointer; }
+  main { max-width: 900px; margin: 0 auto; padding: 16px; display: grid; gap: 12px; }
+  .empty { text-align: center; color: var(--muted); padding: 60px 16px; }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 14px 16px; }
+  .card.new { animation: flash 1.2s ease-out; }
+  @keyframes flash { from { box-shadow: 0 0 0 3px var(--ok); } to { box-shadow: 0 0 0 0 transparent; } }
+  .chips { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; }
+  .chip { background: var(--chip); color: var(--chip-text); font-size: 12px; padding: 2px 9px; border-radius: 9px; }
+  .q { font-size: 17px; font-weight: 600; margin: 0 0 8px; overflow-wrap: anywhere; }
+  .opts { list-style: none; margin: 0 0 8px; padding: 0; display: grid; gap: 4px; }
+  .opts li { padding: 6px 10px; border-radius: 8px; }
+  .opts li.chosen { background: var(--ok-bg); font-weight: 700; }
+  .ans { border-top: 1px solid var(--border); padding-top: 8px; }
+  .ans .main { font-weight: 700; font-size: 16px; }
+  .meta { color: var(--muted); font-size: 12px; }
+  .err { color: var(--err); }
+  .disc { color: var(--warn); font-size: 13px; }
+  .ctx { color: var(--muted); font-size: 12px; margin: -4px 0 8px; }
+  [dir=rtl] { text-align: right; }
+  @media (max-width: 480px) { main { padding: 10px; } .q { font-size: 16px; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>Playtoon</h1>
+  <span class="dot" id="dot"></span><span class="status" id="status">Connecting…</span>
+  <span class="status" id="answerer"></span>
+  <span class="spacer"></span>
+  <span id="caps"></span>
+  <button id="clearView" title="Hide current cards on this screen only">Clear view</button>
+</header>
+<main id="list"><div class="empty" id="empty">Waiting for questions…</div></main>
+<script>
+(() => {
+  const LANG = { en: "English", fr: "Français", ar: "العربية" };
+  const list = document.getElementById("list"), empty = document.getElementById("empty");
+  const cards = new Map();
+  let hiddenBefore = 0;
+
+  function el(tag, cls, text) { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
+
+  function render(q, isNew) {
+    if (Date.parse(q.timestamp) < hiddenBefore && !cards.has(q.question_id)) return;
+    let card = cards.get(q.question_id);
+    if (!card) { card = el("article", "card"); cards.set(q.question_id, card); list.prepend(card); }
+    card.replaceChildren();
+    if (q.language === "ar") card.setAttribute("dir", "rtl"); else card.removeAttribute("dir");
+    const chips = el("div", "chips");
+    const src = q.source.length > 1 ? "visual + audio" : (q.source[0] || "-");
+    [`Source: ${src}`, `Language: ${LANG[q.language] || q.language}`, q.status.replace(/_/g, " ")]
+      .concat(q.revision ? [`rev ${q.revision}`] : []).forEach(t => chips.append(el("span", "chip", t)));
+    card.append(chips, el("p", "q", q.question_text));
+    if (q.context && q.context.length) card.append(el("div", "ctx", "Context: " + q.context.slice(-2).join(" · ")));
+    const a = q.answer;
+    if (q.options && q.options.length) {
+      const ul = el("ul", "opts");
+      q.options.forEach((o, i) => {
+        const li = el("li", a && a.option_index === i ? "chosen" : "", `${String.fromCharCode(65 + i)}) ${o}` + (a && a.option_index === i ? "  ✓" : ""));
+        ul.append(li);
+      });
+      card.append(ul);
+    }
+    (q.discrepancies || []).forEach(d => card.append(el("div", "disc",
+      `⚠ ${d.field} differ: ` + Object.entries(d.values).map(([k, v]) => `${k}: ${v}`).join(" / ") + ` — ${d.resolution}`)));
+    const box = el("div", "ans");
+    if (a) {
+      box.append(el("div", "main", `Suggested answer: ${a.suggested_answer ?? "—"}`));
+      box.append(el("div", "meta", `Confidence: ${Math.round(a.confidence * 100)}% · Detection: ${Math.round(q.confidence * 100)}%`));
+      if (a.explanation) box.append(el("div", "", a.explanation));
+      box.append(el("div", "meta", `Processing: ${q.processing_ms ?? a.duration_ms} ms (model ${a.duration_ms} ms) · ${a.provider}${a.model ? " / " + a.model : ""}`));
+    } else if (q.status === "failed") {
+      box.append(el("div", "main err", "Could not get an answer"));
+      box.append(el("div", "err", q.error || "The AI request failed. Check the engine log."));
+    } else {
+      box.append(el("div", "meta", q.status === "analyzing" ? "Analyzing…" : q.status === "incomplete" ? "Waiting for a complete question…" : "Preparing answer…"));
+    }
+    card.append(box);
+    if (isNew) { card.classList.remove("new"); void card.offsetWidth; card.classList.add("new"); }
+    empty.style.display = cards.size ? "none" : "";
+  }
+
+  function setConn(state, text) {
+    document.getElementById("dot").className = "dot" + (state === "on" ? " on" : state === "wait" ? " wait" : "");
+    document.getElementById("status").textContent = text;
+  }
+  function setCaps(active) {
+    const box = document.getElementById("caps"); box.replaceChildren();
+    Object.keys(active || {}).forEach(k => box.append(el("span", "rec", (k.startsWith("microphone") ? "MIC" : "SCREEN") + " ON")));
+  }
+
+  function connect() {
+    setConn("wait", "Connecting…");
+    const ws = current = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws/client`);
+    ws.onopen = () => setConn("on", "Connected");
+    ws.onclose = () => { setConn("off", "Disconnected — retrying"); setTimeout(connect, 2000); };
+    ws.onmessage = ev => {
+      const m = JSON.parse(ev.data), d = m.data;
+      if (m.type === "hello") {
+        document.getElementById("answerer").textContent = "· answerer: " + d.answerer;
+        setCaps(d.capture);
+        list.querySelectorAll(".card").forEach(c => c.remove()); cards.clear();
+        (d.history || []).slice().reverse().forEach(q => render(q, false));
+      } else if (m.type === "reset") {
+        list.querySelectorAll(".card").forEach(c => c.remove()); cards.clear(); empty.style.display = "";
+      } else if (m.type === "capture.status") {
+        setCaps(d.active);
+      } else if (m.type.startsWith("question.") && d && d.question_id) {
+        render(d, m.type === "question.answered" || m.type === "question.detected");
+      }
+    };
+  }
+  let current = null;
+  setInterval(() => { if (current && current.readyState === 1) current.send('{"type":"ping"}'); }, 20000);
+
+  document.getElementById("clearView").onclick = () => {
+    hiddenBefore = Date.now();
+    list.querySelectorAll(".card").forEach(c => c.remove()); cards.clear(); empty.style.display = "";
+  };
+  connect();
+})();
+</script>
+</body>
+</html>
