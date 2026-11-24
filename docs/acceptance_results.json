@@ -33,7 +33,7 @@
   },
   "test_01_browser_text": {
     "question": {
-      "question_id": "q_e6c727a539de",
+      "question_id": "q_297cb74a85d7",
       "question_text": "Which planet has the largest number of moons?",
       "source": [
         "visual"
@@ -53,7 +53,7 @@
       "status": "answered",
       "revision": 0,
       "discrepancies": [],
-      "processing_ms": 625,
+      "processing_ms": 641,
       "answer": "Saturn",
       "option_index": 1,
       "answer_provider": "offline"
@@ -61,12 +61,12 @@
     "dom_updates_sent": 1,
     "screenshot_ocr": "Weekly quiz\nWelcome back! Read carefully.\nWhich planet has the largest number of moons?\nA) Jupiter\nB) Saturn\nC) Uranus\nD) Neptune\n\nHi! I am QuizBot. Let us warm up.\nWho wrote Hamlet? And in which country\nwas he born?\nShakespeare, England.\nCorrect! Next: what is the capital of Japan?\nA) Kyoto B) Osaka C) Tokyo D) Nagoya\nTokyo\nAnd what about Australia?",
     "outcome": "passed",
-    "duration_s": 0.01
+    "duration_s": 0.0
   },
   "test_04_chatbot_conversation": {
     "questions": [
       {
-        "question_id": "q_5b975fec0ca6",
+        "question_id": "q_586bd18dc276",
         "question_text": "Who wrote Hamlet?",
         "source": [
           "visual"
@@ -87,7 +87,7 @@
         "answer_provider": "offline"
       },
       {
-        "question_id": "q_2008fbba8518",
+        "question_id": "q_218cb07e0c8e",
         "question_text": "And in which country was he born?",
         "source": [
           "visual"
@@ -108,7 +108,7 @@
         "answer_provider": "offline"
       },
       {
-        "question_id": "q_29468d8f239a",
+        "question_id": "q_45574c65768a",
         "question_text": "what is the capital of Japan?",
         "source": [
           "visual"
@@ -128,13 +128,13 @@
         "status": "answered",
         "revision": 0,
         "discrepancies": [],
-        "processing_ms": 1015,
+        "processing_ms": 1032,
         "answer": "Tokyo",
         "option_index": 2,
         "answer_provider": "offline"
       },
       {
-        "question_id": "q_64460723a31f",
+        "question_id": "q_8b61e95fcb74",
         "question_text": "And what about Australia?",
         "source": [
           "visual"
@@ -149,7 +149,7 @@
         "status": "answered",
         "revision": 0,
         "discrepancies": [],
-        "processing_ms": 1046,
+        "processing_ms": 1000,
         "answer": "Canberra",
         "option_index": null,
         "answer_provider": "offline"
@@ -162,7 +162,7 @@
   "test_02_image_question": {
     "ocr_text": "Space Trivia - Round 2\nWhich planet has the largest number of moons?\nA) Jupiter\nB)Saturn\nC) Uranus\nD) Neptune",
     "question": {
-      "question_id": "q_08ae4dadc97a",
+      "question_id": "q_981b792cb35e",
       "question_text": "Which planet has the largest number of moons?",
       "source": [
         "visual"
@@ -181,14 +181,14 @@
       "status": "answered",
       "revision": 0,
       "discrepancies": [],
-      "processing_ms": 78,
+      "processing_ms": 94,
       "answer": "Saturn",
       "option_index": 1,
       "answer_provider": "offline"
     },
     "math_ocr": "Math check:\nWhat is 12 x 7 + 5 = ?",
     "math": {
-      "question_id": "q_e2704d75eb26",
+      "question_id": "q_f56307fe7a6f",
       "question_text": "What is 12 x 7 + 5 = ?",
       "source": [
         "visual"
@@ -202,13 +202,13 @@
       "status": "answered",
       "revision": 0,
       "discrepancies": [],
-      "processing_ms": 79,
+      "processing_ms": 109,
       "answer": "89",
       "option_index": null,
       "answer_provider": "offline"
     },
     "outcome": "passed",
-    "duration_s": 2.73
+    "duration_s": 2.78
   },
   "test_03_video_frames": {
     "job_stats": {
@@ -587,7 +587,7 @@
   },
   "test_08_simultaneous_audio_and_visual": {
     "question": {
-      "question_id": "q_8c99cbf877ee",
+      "question_id": "q_e23ebc92b753",
       "question_text": "Which planet has the largest number of moons?",
       "source": [
         "visual",
@@ -608,7 +608,7 @@
       "status": "answered",
       "revision": 0,
       "discrepancies": [],
-      "processing_ms": 62,
+      "processing_ms": 92,
       "answer": "Saturn",
       "option_index": 1,
       "answer_provider": "offline"
@@ -619,7 +619,7 @@
     },
     "ai_requests": 1,
     "outcome": "passed",
-    "duration_s": 15.93
+    "duration_s": 8.6
   },
   "test_09_no_duplicate_submission": {
     "detections_submitted": 5,
@@ -632,7 +632,7 @@
       "visual"
     ],
     "outcome": "passed",
-    "duration_s": 6.12
+    "duration_s": 6.1
   },
   "test_10_android_displays_result": {
     "ui_text": "Source: visual | Language: English | answered | Which planet has the largest number of moons? | A) Jupiter | B) Saturn  ✓ | C) Uranus | D) Neptune | Suggested answer: Saturn | Confidence: 60%  ·  Detection: 98% | Saturn has the most confirmed moons (over 270 as of 2025). (offline demo knowledge) | Processing: 1203 ms (model 0 ms) · offline | Playtoon | Connected | Live | Audio | History | Settings",
@@ -1221,11 +1221,15 @@
     "duration_s": 7.4
   },
   "_meta": {
-    "finished": "2026-11-24T01:50:09",
+    "finished": "2026-11-24T02:00:17",
     "python": "3.12.10"
   },
   "test_numbered_questions_are_not_options": {
     "outcome": "passed",
     "duration_s": 0.0
+  },
+  "test_groq_rate_limit_falls_back_to_next_model": {
+    "outcome": "passed",
+    "duration_s": 0.22
   }
 }

@@ -13,3 +13,5 @@ android/local.properties
 *.iml
 .env
 android/.kotlin/
+backend/data/
+backend/tests/.answer_cache_test.json

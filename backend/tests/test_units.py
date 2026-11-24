@@ -84,3 +84,34 @@ def test_numbered_questions_are_not_options():
                                     "What is a test plan?"]
     mcq = extract_questions("Which of these is a prime number?\n1. 21\n2. 27\n3. 29\n4. 33")
     assert mcq[0].options == ["21", "27", "29", "33"]
+
+
+def test_groq_rate_limit_falls_back_to_next_model(monkeypatch):
+    """A 429 on one model puts it on cooldown and the same question is answered by the next model."""
+    import asyncio
+    import json as _json
+
+    import httpx
+
+    from playtoon.models import DetectedQuestion
+    from playtoon.reasoning import OpenAICompatAnswerer, ReasoningConfig
+    monkeypatch.setenv("GROQ_API_KEY", "gsk_test")
+    calls = []
+
+    def handler(request):
+        model = _json.loads(request.content)["model"]
+        calls.append(model)
+        if model == "openai/gpt-oss-120b":
+            return httpx.Response(429, text='{"error":{"message":"Rate limit reached ... Please try again in 7.5s."}}')
+        return httpx.Response(200, json={"choices": [{"message": {"content": _json.dumps(
+            {"suggested_answer": "4", "option_index": 1, "confidence": 0.9, "explanation": "2+2", "used_variant": "n/a"})}}]})
+
+    a = OpenAICompatAnswerer("groq", ReasoningConfig(provider="groq"))
+    a.client = httpx.AsyncClient(base_url="https://x", transport=httpx.MockTransport(handler))
+    q = DetectedQuestion(question_text="What is 2+2?", language="en", options=["3", "4"], confidence=0.9, status=Status.READY)
+    ans = asyncio.run(a.answer(q))
+    assert ans.suggested_answer == "4" and ans.model == "openai/gpt-oss-20b"
+    assert calls == ["openai/gpt-oss-120b", "openai/gpt-oss-20b"]
+    assert 6 < a.cooldown["openai/gpt-oss-120b"] - __import__("time").monotonic() <= 7.5
+    asyncio.run(a.answer(q))                       # 120b still cooling down: goes straight to 20b
+    assert calls[-1] == "openai/gpt-oss-20b" and calls.count("openai/gpt-oss-120b") == 1

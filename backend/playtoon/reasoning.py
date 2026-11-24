@@ -212,9 +212,10 @@ def has_anthropic_credentials() -> bool:
 
 # OpenAI-compatible chat-completions providers. Groq has a free tier (rate-limited); xAI (Grok) is paid.
 OPENAI_COMPAT = {
+    # Groq's free-tier limits are per model, so when one model is rate-limited the next one still has quota.
     "groq": dict(base_url="https://api.groq.com/openai/v1", key_env="GROQ_API_KEY",
-                 default_model="openai/gpt-oss-120b"),
-    "xai": dict(base_url="https://api.x.ai/v1", key_env="XAI_API_KEY", default_model="grok-4"),
+                 default_model="openai/gpt-oss-120b", fallbacks=["openai/gpt-oss-20b", "qwen/qwen3.8-27b"]),
+    "xai": dict(base_url="https://api.x.ai/v1", key_env="XAI_API_KEY", default_model="grok-4", fallbacks=[]),
 }
 OPENAI_COMPAT["grok"] = OPENAI_COMPAT["xai"]
 
@@ -235,24 +236,39 @@ class OpenAICompatAnswerer:
         self.key_env = spec["key_env"]
         # a Claude model id left in the config means "use this provider's default model"
         self.model = cfg.model if cfg.model and not cfg.model.startswith("claude") else spec["default_model"]
+        extra = os.environ.get("PLAYTOON_AI_FALLBACK_MODELS")
+        fallbacks = [m.strip() for m in extra.split(",") if m.strip()] if extra is not None else spec["fallbacks"]
+        self.models = [self.model] + [m for m in fallbacks if m != self.model]
+        self.cooldown: dict[str, float] = {}     # model -> monotonic time when it may be used again
         self.client = httpx.AsyncClient(base_url=spec["base_url"], timeout=60.0,
                                         headers={"Authorization": f"Bearer {key}"})
         self.last_error: str | None = None
+        self.rate_limited = 0
 
-    async def answer(self, q: DetectedQuestion) -> Answer:
-        import httpx
-        t0 = time.perf_counter()
-        user = build_user_prompt(q) + (
-            f"\nTranslate the question to '{self.cfg.translate_to}' first and write the explanation in that language."
-            if self.cfg.translate_to else "")
-        body = {
-            "model": self.model,
+    @staticmethod
+    def _retry_after(r) -> float:
+        """Seconds to wait, from Retry-After or Groq's 'try again in 7.5s' / '1m2.5s' message."""
+        h = r.headers.get("retry-after")
+        if h:
+            try:
+                return float(h)
+            except ValueError:
+                pass
+        m = re.search(r"try again in (?:(\d+)m)?([\d.]+)s", r.text)
+        if m:
+            return float(m.group(1) or 0) * 60 + float(m.group(2))
+        m = re.search(r"try again in (\d+)m", r.text)
+        return float(m.group(1)) * 60 if m else 20.0
+
+    def _body(self, model: str, user: str) -> dict:
+        return {
+            "model": model,
             "temperature": 0,
-            "max_tokens": 4000,
+            "max_tokens": 1500,        # tokens-per-minute limits count the reservation, keep it modest
             "response_format": {"type": "json_object"},
             # gpt-oss / qwen reasoning models: keep thinking short for quiz latency, hide it from the reply
             **({"reasoning_effort": self.cfg.effort if self.cfg.effort in ("low", "medium", "high") else "low",
-                "include_reasoning": False} if self.model.startswith(("openai/gpt-oss", "qwen/")) else {}),
+                "include_reasoning": False} if model.startswith(("openai/gpt-oss", "qwen/")) else {}),
             "messages": [
                 {"role": "system", "content": SYSTEM_PROMPT + "\nReply with only a JSON object with the keys: "
                  "suggested_answer (string), option_index (integer, -1 if none), confidence (number 0-1), "
@@ -260,15 +276,42 @@ class OpenAICompatAnswerer:
                 {"role": "user", "content": user},
             ],
         }
-        try:
-            r = await self.client.post("/chat/completions", json=body)
-        except httpx.HTTPError as e:
-            raise RuntimeError(f"{self.name} connection error: {e}") from e
+
+    async def answer(self, q: DetectedQuestion) -> Answer:
+        import httpx
+        t0 = time.perf_counter()
+        user = build_user_prompt(q) + (
+            f"\nTranslate the question to '{self.cfg.translate_to}' first and write the explanation in that language."
+            if self.cfg.translate_to else "")
+        r, used = None, None
+        waits: list[str] = []
+        for model in self.models:
+            if self.cooldown.get(model, 0) > time.monotonic():
+                waits.append(f"{model} ({self.cooldown[model] - time.monotonic():.0f}s)")
+                continue
+            try:
+                r = await self.client.post("/chat/completions", json=self._body(model, user))
+            except httpx.HTTPError as e:
+                raise RuntimeError(f"{self.name} connection error: {e}") from e
+            if r.status_code == 429:
+                wait = self._retry_after(r)
+                self.cooldown[model] = time.monotonic() + wait
+                self.rate_limited += 1
+                waits.append(f"{model} ({wait:.0f}s)")
+                log.info("%s rate-limited on %s for %.0fs; trying next model", self.name, model, wait)
+                continue
+            if r.status_code == 404 or (r.status_code == 400 and "model" in r.text.lower() and "not" in r.text.lower()):
+                self.cooldown[model] = time.monotonic() + 3600          # model not available to this key
+                waits.append(f"{model} (unavailable)")
+                continue
+            used = model
+            break
+        if used is None:
+            raise RuntimeError(f"{self.name} free-tier rate limit reached on all models; available again in: "
+                               + ", ".join(waits))
         if r.status_code in (401, 403):
             self.last_error = f"{self.name} API key rejected ({r.status_code}): check {self.key_env} on the PC running Playtoon"
             raise RuntimeError(self.last_error)
-        if r.status_code == 429:
-            raise RuntimeError(f"{self.name} rate limit reached (free tier?): {r.text[:200]}")
         if r.status_code >= 400:
             raise RuntimeError(f"{self.name} API error {r.status_code}: {r.text[:300]}")
         self.last_error = None
@@ -287,7 +330,7 @@ class OpenAICompatAnswerer:
         except (TypeError, ValueError):
             conf = 0.0
         return Answer(ans or None, idx, max(0.0, min(1.0, conf)), str(data.get("explanation", "")),
-                      self.name, self.model, ms)
+                      self.name, used, ms)
 
 
 def make_answerer(cfg: ReasoningConfig):

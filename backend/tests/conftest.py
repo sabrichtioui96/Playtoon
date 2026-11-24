@@ -33,6 +33,7 @@ def run_server():
     env = {**os.environ, "PLAYTOON_PORT": str(PORT), "PLAYTOON_HOST": "127.0.0.1",
            "PLAYTOON_AI_PROVIDER": os.environ.get("PLAYTOON_AI_PROVIDER", "offline"),
            "PLAYTOON_ASR_MODEL_AR": os.environ.get("PLAYTOON_ASR_MODEL_AR", "large-v3-turbo"),
+           "PLAYTOON_CACHE": str(ROOT / "tests" / ".answer_cache_test.json"),   # never touch the real cache
            "PYTHONIOENCODING": "utf-8"}
     log = open(ROOT / "tests" / "server.log", "w", encoding="utf-8")
     proc = subprocess.Popen([sys.executable, "-m", "playtoon.server"], cwd=ROOT, env=env, stdout=log, stderr=subprocess.STDOUT)

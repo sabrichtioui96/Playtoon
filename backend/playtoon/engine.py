@@ -4,6 +4,8 @@ from __future__ import annotations
 import asyncio
 import itertools
 import json
+import os
+from pathlib import Path
 import logging
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -16,7 +18,7 @@ from .audio import AudioSegmenter, UtteranceAssembler, get_transcriber, pcm16_fr
 from .text_utils import detect_language
 from .chat import ChatTracker
 from .fusion import FusionConfig, QuestionManager
-from .models import DetectedQuestion, Modality, Observation, Status, utc_now_iso
+from .models import Answer, DetectedQuestion, Modality, Observation, Status, utc_now_iso
 from .reasoning import ReasoningConfig, make_answerer
 from .vision import VideoStreamProcessor, decode_image, iter_video, observations_from_text, process_image
 
@@ -30,7 +32,7 @@ class EngineConfig:
     asr_vocabulary: str = ""               # host-supplied topic terms that bias speech recognition spelling
     answer_workers: int = 2
     max_audio_wait_s: float = 1.0           # hold progressive visual-only questions while speech is transcribed
-    speculative: bool = True                # start the model during the settle window
+    speculative: bool | str = "paid_only"  # start the model during the settle window (paid providers only)
     speculative_delay_s: float = 0.25
     reasoning: ReasoningConfig = field(default_factory=ReasoningConfig)
     fusion: FusionConfig = field(default_factory=FusionConfig)
@@ -38,6 +40,35 @@ class EngineConfig:
     def public(self) -> dict[str, Any]:
         return {"asr_model": self.asr_model, "language": self.language, "asr_vocabulary": self.asr_vocabulary,
                 "reasoning": asdict(self.reasoning), "fusion": asdict(self.fusion)}
+
+
+class AnswerCache:
+    """Answers already obtained for a question (same text, options, context, language). Persisted to
+    data/answer_cache.json so a question repeated in a later game costs no API call."""
+
+    def __init__(self, path: Path | None = None, max_items: int = 5000):
+        self.path = path or Path(os.environ.get("PLAYTOON_CACHE", Path(__file__).resolve().parents[1] / "data" / "answer_cache.json"))
+        self.max_items = max_items
+        self.items: dict[str, dict] = {}
+        try:
+            self.items = json.loads(self.path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            pass
+
+    def get(self, key: str) -> dict | None:
+        return self.items.get(key)
+
+    def put(self, key: str, value: dict) -> None:
+        self.items[key] = value
+        while len(self.items) > self.max_items:
+            self.items.pop(next(iter(self.items)))
+        try:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = self.path.with_suffix(".tmp")
+            tmp.write_text(json.dumps(self.items, ensure_ascii=False), encoding="utf-8")
+            tmp.replace(self.path)
+        except OSError:
+            log.warning("could not persist answer cache")
 
 
 class AudioSession:
@@ -146,6 +177,8 @@ class Engine:
         self.capture: dict[str, dict] = {}        # active capture indicators (privacy)
         self._spec: dict[str, tuple] = {}
         self.model_calls = self.spec_started = self.spec_used = 0
+        self.cache_hits = 0
+        self.answer_cache = AnswerCache()
 
     # ---------------------------------------------------------------- lifecycle
     async def start(self) -> None:
@@ -309,6 +342,10 @@ class Engine:
     def _speculate(self, q: DetectedQuestion) -> None:
         if not self.cfg.speculative or q.status != Status.SETTLING or self.manager.is_final(q):
             return
+        if self.cfg.speculative == "paid_only" and self.answerer.name not in ("anthropic", "xai"):
+            return            # free tiers (Groq): never spend quota on a call that might be discarded
+        if self.answer_cache.get(self._cache_key(q)) is not None:
+            return
         fp = self.manager.fingerprint(q)
         cur = self._spec.get(q.question_id)
         if cur is not None:
@@ -325,7 +362,25 @@ class Engine:
         self.spec_started += 1
         return await self.answerer.answer(q)
 
+    def _cache_key(self, q: DetectedQuestion) -> str:
+        text, opts, _, ctx = self.manager.fingerprint(q)
+        return json.dumps([q.language, text, list(opts), list(ctx), self.cfg.reasoning.translate_to or ""],
+                          ensure_ascii=False)
+
     async def _get_answer(self, q: DetectedQuestion):
+        key = self._cache_key(q)
+        hit = self.answer_cache.get(key)
+        if hit is not None:                       # same question seen before: no API call at all
+            self.cache_hits += 1
+            self._spec.pop(q.question_id, None)
+            return Answer(hit["suggested_answer"], hit["option_index"], hit["confidence"], hit["explanation"],
+                          f"{hit['provider']} (cached)", hit.get("model"), 0)
+        ans = await self._get_answer_uncached(q)
+        if ans.suggested_answer and ans.provider != "offline":
+            self.answer_cache.put(key, ans.to_dict())
+        return ans
+
+    async def _get_answer_uncached(self, q: DetectedQuestion):
         spec = self._spec.pop(q.question_id, None)
         if spec is not None:
             fp, task = spec
@@ -405,7 +460,8 @@ class Engine:
         qs = list(self.manager.questions.values())
         return {"questions": len(qs), "ai_requests": self.manager.ai_requests,
                 "model_calls": self.model_calls, "speculative_started": self.spec_started,
-                "speculative_used": self.spec_used,
+                "speculative_used": self.spec_used, "cache_hits": self.cache_hits,
+                "rate_limited": getattr(self.answerer, "rate_limited", 0),
                 "suppressed_duplicates": self.manager.suppressed_duplicates,
                 "by_status": {s.value: sum(q.status == s for q in qs) for s in Status},
                 "clients": len(self.clients), "audio_sessions": len(self.audio_sessions),
